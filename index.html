@@ -1,0 +1,115 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Cloudflare Aivis TTS</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
+        textarea, input, select { width: 100%; padding: 8px; margin-bottom: 12px; border-radius: 4px; border: 1px solid #ccc; box-sizing: border-box; }
+        .button-group { display: flex; gap: 10px; }
+        button { flex-grow: 1; background-color: #007bff; color: white; padding: 12px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; transition: background-color 0.2s; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        button:hover:not(:disabled) { background-color: #0056b3; }
+        #player-container { margin-top: 20px; }
+        #status { margin-top: 15px; color: #555; height: 1.5em; }
+    </style>
+</head>
+<body>
+    <h1>Cloudflare Aivis TTS</h1>
+
+    <label for="text">テキスト:</label>
+    <textarea id="text">クラウドフレアワーカーズを使って、高速に音声を生成します。</textarea>
+
+    <label for="style_name">スタイル名 (任意):</label>
+    <input type="text" id="style_name" placeholder="例: キレ芸２">
+
+    <label for="style_strength">スタイル強度 (任意):</label>
+    <input type="number" id="style_strength" value="1.0" step="0.1" min="0" max="2.0">
+
+    <div class="button-group">
+        <button id="synthesize-btn">再生</button>
+        <button id="download-btn">ダウンロード</button>
+    </div>
+
+    <div id="status">準備完了</div>
+    <div id="player-container"></div>
+
+    <script>
+        const synthesizeBtn = document.getElementById('synthesize-btn');
+        const downloadBtn = document.getElementById('download-btn');
+        const textInput = document.getElementById('text');
+        const styleNameInput = document.getElementById('style_name');
+        const styleStrengthInput = document.getElementById('style_strength');
+        const statusDiv = document.getElementById('status');
+        const playerContainer = document.getElementById('player-container');
+
+        // 音声生成・ダウンロード処理を共通化
+        const handleRequest = async (isDownload = false) => {
+            const button = isDownload ? downloadBtn : synthesizeBtn;
+            button.disabled = true;
+            synthesizeBtn.disabled = true; // 両方無効化
+            downloadBtn.disabled = true;
+            statusDiv.textContent = isDownload ? 'ダウンロード準備中...' : '音声生成中...';
+            playerContainer.innerHTML = '';
+
+            const requestBody = {
+                text: textInput.value,
+                style_name: styleNameInput.value || null,
+                style_strength: styleNameInput.value ? parseFloat(styleStrengthInput.value) : null,
+                output_format: "opus", // Opusを指定して通信量を節約
+                download: isDownload // ダウンロードフラグを立てる
+            };
+            
+            try {
+                // Cloudflare Functionsのエンドポイントにリクエスト
+                const response = await fetch('/synthesize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (response.ok) {
+                    const audioBlob = await response.blob();
+                    
+                    if (isDownload) {
+                        // ダウンロード処理
+                        const url = window.URL.createObjectURL(audioBlob);
+                        const a = document.createElement('a');
+                        a.style.display = 'none';
+                        a.href = url;
+                        a.download = 'aivis_output.opus'; // ファイル名
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        a.remove();
+                        statusDiv.textContent = 'ダウンロードを開始しました。';
+                    } else {
+                        // 再生処理
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        const audio = new Audio(audioUrl);
+                        audio.controls = true;
+                        playerContainer.appendChild(audio);
+                        audio.play();
+                        statusDiv.textContent = '音声の再生を開始しました。';
+                    }
+                } else {
+                    const errorText = await response.text();
+                    console.error('Error:', errorText);
+                    statusDiv.textContent = `エラー: ${errorText}`;
+                }
+
+            } catch (error) {
+                console.error('Fetch Error:', error);
+                statusDiv.textContent = '通信エラーが発生しました。';
+            } finally {
+                synthesizeBtn.disabled = false;
+                downloadBtn.disabled = false;
+            }
+        };
+        
+        synthesizeBtn.addEventListener('click', () => handleRequest(false));
+        downloadBtn.addEventListener('click', () => handleRequest(true));
+    </script>
+</body>
+</html>
