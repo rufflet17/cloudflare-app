@@ -1,23 +1,31 @@
 // functions/synthesize.js
 
 /**
- * Aivis APIに単一の音声合成リクエストを送信するヘルパー関数
- * (この関数はAPI仕様に合わせるため、今回の修正では使用しませんが、今後のために残しておきます)
+ * Aivis API v1/tts/synthesize に単一の音声合成リクエストを送信するヘルパー関数
+ * @param {string} text - 合成するテキスト
+ * @param {string} modelUuid - モデルのUUID
+ * @param {string} apiKey - APIキー
+ * @param {object} options - スタイル名と強度を含むオブジェクト
+ * @returns {Promise<object>} フロントエンドに返すための結果オブジェクト
  */
-async function synthesizeSingleText(text, model_uuid, apiKey, options) {
+async function synthesizeSingleText(text, modelUuid, apiKey, options) {
     const { style_name, style_strength } = options;
-    const aivisApiUrl = "https://api.aivis-project.com/v1/text2speech";
+    
+    // APIエンドポイントを新しいものに設定
+    const aivisApiUrl = "https://api.aivis-project.com/v1/tts/synthesize";
 
-    // ★★★ 修正点: `speaker_uuid` を `model_uuid` に変更 ★★★
+    // ★★★ 修正点: `speaker_uuid` を含めず、`model_uuid` のみを使用 ★★★
     const requestPayload = {
         text: text,
-        model_uuid: model_uuid, // パラメータ名をAPIの要求に合わせて変更
+        model_uuid: modelUuid, // model_uuidのみを必須項目として送信
     };
     
-    if (style_name && style_name !== "取得失敗") { // "取得失敗" のような無効な値は送らない
+    // スタイル名が有効な場合のみペイロードに追加
+    if (style_name && style_name !== "取得失敗") {
         requestPayload.style_name = style_name;
+        // style_strength を emotional_intensity にマッピング
         if (style_strength !== null && style_strength !== undefined) {
-            requestPayload.style_strength = style_strength;
+            requestPayload.emotional_intensity = style_strength;
         }
     }
     
@@ -34,21 +42,31 @@ async function synthesizeSingleText(text, model_uuid, apiKey, options) {
         if (!aivisResponse.ok) {
             const errorText = await aivisResponse.text();
             return {
-                status: 'error', text: text,
+                status: 'error',
+                text: text,
                 reason: `APIエラー (${aivisResponse.status}): ${errorText}`
             };
         }
+
         const aivisData = await aivisResponse.json();
+        
+        // APIのレスポンス形式に合わせてキーを調整
         return {
-            status: 'success', text: aivisData.text,
-            audio_base64: aivisData.audio_base64,
+            status: 'success',
+            text: text, 
+            audio_base64: aivisData.audio_base64 || aivisData.audio,
             content_type: aivisData.content_type || 'audio/opus'
         };
 
     } catch (e) {
-        return { status: 'error', text: text, reason: `リクエスト処理エラー: ${e.message}` };
+        return {
+            status: 'error',
+            text: text,
+            reason: `リクエスト処理中にエラーが発生: ${e.message}`
+        };
     }
 }
+
 
 /**
  * メインのリクエストハンドラー
@@ -66,12 +84,12 @@ async function handleRequest(context) {
         return new Response("リクエストボディに 'model_id' が必要です。", { status: 400 });
     }
     
-    // 変数名を明確にする (targetUuid -> targetModelUuid)
+    // ★★★ 修正点: 環境変数から単一のUUIDを取得 (元のシンプルな形式に戻す) ★★★
     const targetModelUuid = env[`MODEL_UUID_${model_id}`];
     const apiKey = env.API_KEY;
 
     if (!apiKey) {
-        return new Response("サーバー環境変数エラー: API_KEY未設定", { status: 500 });
+        return new Response("サーバー側の環境変数エラー: API_KEYが設定されていません。", { status: 500 });
     }
     if (!targetModelUuid) {
         return new Response(`サーバーエラー: モデルID ${model_id} のUUIDが見つかりません。`, { status: 400 });
@@ -81,7 +99,6 @@ async function handleRequest(context) {
     const options = { style_name, style_strength };
     
     const results = await Promise.all(
-        // ★★★ 修正点: targetModelUuid を synthesizeSingleText に渡す ★★★
         texts.map(text => synthesizeSingleText(text, targetModelUuid, apiKey, options))
     );
 
@@ -97,6 +114,6 @@ export async function onRequest(context) {
     try {
         return await handleRequest(context);
     } catch (e) {
-        return new Response(`サーバー内部エラー: ${e.message}`, { status: 500 });
+        return new Response(`サーバー内部で予期せぬエラーが発生しました: ${e.message}`, { status: 500 });
     }
 }
