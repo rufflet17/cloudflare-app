@@ -28,7 +28,7 @@ export async function onRequest(context) {
 
     // ★★★ 修正点2: 呼び出すAPIのエンドポイントを /v1/speakers に変更 ★★★
     // これがスタイル一覧を取得するための正しいAPIです。
-    const aivisSpeakersApiUrl = `https://api.aivis-project.com/v1/speakers`;
+    const aivisSpeakersApiUrl = `https://api.aivis-project.com/v1/aivm-models/speakers/styles`;
     
     const aivisResponse = await fetch(aivisSpeakersApiUrl, {
       method: 'GET',
