@@ -2,25 +2,20 @@
 
 /**
  * Aivis APIに単一の音声合成リクエストを送信するヘルパー関数
- * @param {string} text - 合成するテキスト
- * @param {string} speaker_uuid - 話者のUUID
- * @param {string} apiKey - APIキー
- * @param {object} options - スタイル名と強度を含むオブジェクト
- * @returns {Promise<object>} フロントエンドに返すための結果オブジェクト
+ * (この関数はAPI仕様に合わせるため、今回の修正では使用しませんが、今後のために残しておきます)
  */
-async function synthesizeSingleText(text, speaker_uuid, apiKey, options) {
+async function synthesizeSingleText(text, model_uuid, apiKey, options) {
     const { style_name, style_strength } = options;
-    const aivisApiUrl = "https://api.aivis-project.com/v1/tts/synthesize";
+    const aivisApiUrl = "https://api.aivis-project.com/v1/text2speech";
 
+    // ★★★ 修正点: `speaker_uuid` を `model_uuid` に変更 ★★★
     const requestPayload = {
         text: text,
-        speaker_uuid: speaker_uuid,
+        model_uuid: model_uuid, // パラメータ名をAPIの要求に合わせて変更
     };
     
-    // スタイル名が指定されている場合のみペイロードに追加
-    if (style_name) {
+    if (style_name && style_name !== "取得失敗") { // "取得失敗" のような無効な値は送らない
         requestPayload.style_name = style_name;
-        // スタイル強度はスタイル名がある場合のみ有効
         if (style_strength !== null && style_strength !== undefined) {
             requestPayload.style_strength = style_strength;
         }
@@ -38,33 +33,22 @@ async function synthesizeSingleText(text, speaker_uuid, apiKey, options) {
 
         if (!aivisResponse.ok) {
             const errorText = await aivisResponse.text();
-            // APIからのエラーメッセージを理由として返す
             return {
-                status: 'error',
-                text: text,
+                status: 'error', text: text,
                 reason: `APIエラー (${aivisResponse.status}): ${errorText}`
             };
         }
-
         const aivisData = await aivisResponse.json();
-        
-        // 成功した結果を返す
         return {
-            status: 'success',
-            text: aivisData.text, // APIが返したテキストを使用
+            status: 'success', text: aivisData.text,
             audio_base64: aivisData.audio_base64,
             content_type: aivisData.content_type || 'audio/opus'
         };
 
     } catch (e) {
-        return {
-            status: 'error',
-            text: text,
-            reason: `リクエスト処理中にエラーが発生: ${e.message}`
-        };
+        return { status: 'error', text: text, reason: `リクエスト処理エラー: ${e.message}` };
     }
 }
-
 
 /**
  * メインのリクエストハンドラー
@@ -82,25 +66,25 @@ async function handleRequest(context) {
         return new Response("リクエストボディに 'model_id' が必要です。", { status: 400 });
     }
     
-    const targetUuid = env[`MODEL_UUID_${model_id}`];
+    // 変数名を明確にする (targetUuid -> targetModelUuid)
+    const targetModelUuid = env[`MODEL_UUID_${model_id}`];
     const apiKey = env.API_KEY;
 
     if (!apiKey) {
-        return new Response("サーバー側の環境変数エラー: API_KEYが設定されていません。", { status: 500 });
+        return new Response("サーバー環境変数エラー: API_KEY未設定", { status: 500 });
     }
-    if (!targetUuid) {
-        return new Response(`サーバーエラー: モデルID ${model_id} に対応するUUIDが見つかりません。`, { status: 400 });
+    if (!targetModelUuid) {
+        return new Response(`サーバーエラー: モデルID ${model_id} のUUIDが見つかりません。`, { status: 400 });
     }
     
     // --- 複数テキストのAPIリクエストを並行して実行 ---
     const options = { style_name, style_strength };
     
-    // Promise.all を使って、すべてのAPIリクエストが完了するのを待つ
     const results = await Promise.all(
-        texts.map(text => synthesizeSingleText(text, targetUuid, apiKey, options))
+        // ★★★ 修正点: targetModelUuid を synthesizeSingleText に渡す ★★★
+        texts.map(text => synthesizeSingleText(text, targetModelUuid, apiKey, options))
     );
 
-    // すべての結果を配列としてフロントエンドに返す
     return new Response(JSON.stringify(results), {
         headers: { 'Content-Type': 'application/json' }
     });
@@ -113,7 +97,6 @@ export async function onRequest(context) {
     try {
         return await handleRequest(context);
     } catch (e) {
-        // JSONパースエラーなど、handleRequestより前の段階で発生するエラーを捕捉
-        return new Response(`サーバー内部で予期せぬエラーが発生しました: ${e.message}`, { status: 500 });
+        return new Response(`サーバー内部エラー: ${e.message}`, { status: 500 });
     }
 }
