@@ -1,24 +1,27 @@
 // functions/synthesize.js
 
-// --- 設定項目 (ここをCloudflareの環境変数に設定するのがベスト) ---
-// ローカルテスト用に直接書くか、本番では環境変数を使います。
-// const API_KEY = "XXX";
-// const MODEL_UUID = "YYY";
-
 const API_URL = "https://api.aivis-project.com/v1/tts/synthesize";
 
+// サーバーサイドの定数
+const MAX_TEXT_LENGTH = 1000; // 1リクエストあたりの最大文字数 (50文字x10行 + α)
+
 export async function onRequest(context) {
-  // Cloudflare Pagesでは、POSTリクエストの処理はこのように書くのが標準です
   if (context.request.method !== "POST") {
     return new Response("POSTメソッドを使用してください", { status: 405 });
   }
 
   try {
-    // 1. クライアントからのリクエストボディ(JSON)を取得
     const clientData = await context.request.json();
     
-    // ★★★★★ 安全な方法: 環境変数からAPIキーを取得 ★★★★★
-    // Cloudflareのダッシュボードで `API_KEY` と `MODEL_UUID` を設定してください。
+    // ★★★★★ サーバーサイドでの入力値バリデーション ★★★★★
+    if (!clientData.text || typeof clientData.text !== 'string' || clientData.text.trim() === '') {
+        return new Response("テキストが空です。", { status: 400 });
+    }
+    if (clientData.text.length > MAX_TEXT_LENGTH) {
+        return new Response(`テキストが長すぎます。最大${MAX_TEXT_LENGTH}文字までです。`, { status: 400 });
+    }
+    
+    // 環境変数からAPIキーとモデルUUIDを取得
     const API_KEY = context.env.API_KEY;
     const MODEL_UUID = context.env.MODEL_UUID;
 
@@ -26,12 +29,12 @@ export async function onRequest(context) {
       return new Response("サーバー側でAPIキーまたはモデルUUIDが設定されていません。", { status: 500 });
     }
 
-    // 2. Aivis APIに送るためのペイロードを作成
+    // Aivis APIに送るためのペイロードを作成
     const payload = {
       model_uuid: MODEL_UUID,
       text: clientData.text,
       use_ssml: false,
-      output_format: clientData.output_format || "opus", // クライアントから指定がなければOpusをデフォルトに
+      output_format: clientData.output_format || "opus",
       language: "ja",
     };
 
@@ -42,7 +45,7 @@ export async function onRequest(context) {
       }
     }
 
-    // 3. Aivis APIにリクエストを送信
+    // Aivis APIにリクエストを送信
     const aivisResponse = await fetch(API_URL, {
       method: "POST",
       headers: {
@@ -52,22 +55,14 @@ export async function onRequest(context) {
       body: JSON.stringify(payload),
     });
 
-    // 4. Aivis APIからのレスポンスをチェック
     if (!aivisResponse.ok) {
-      // エラーの場合は、Aivisからのエラーメッセージをクライアントに返す
       const errorText = await aivisResponse.text();
       return new Response(`Aivis APIエラー: ${errorText}`, { status: aivisResponse.status });
     }
-
-    // 5. Aivis APIからの音声データをクライアントにストリーミングで返す
-    //    Content-Typeヘッダーなどをそのまま引き継ぐ
+    
+    // Aivis APIからの音声データをクライアントに返す
     const headers = new Headers();
     headers.set('Content-Type', aivisResponse.headers.get('Content-Type'));
-
-    // ダウンロード用のリクエストかどうかを判定
-    if (clientData.download) {
-        headers.set('Content-Disposition', 'attachment; filename="aivis_output.opus"');
-    }
 
     return new Response(aivisResponse.body, {
       status: aivisResponse.status,
@@ -75,6 +70,10 @@ export async function onRequest(context) {
     });
 
   } catch (e) {
+    // JSONパースエラーなどもここでキャッチ
+    if (e instanceof SyntaxError) {
+      return new Response("無効なリクエスト形式です。", { status: 400 });
+    }
     return new Response(`サーバー内部エラー: ${e.message}`, { status: 500 });
   }
 }
