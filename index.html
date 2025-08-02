@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Cloudflare Aivis TTS (動的設定対応版)</title>
+    <title>Cloudflare Aivis TTS (WAV版)</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 700px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
@@ -12,7 +12,7 @@
         .slider-container { display: flex; align-items: center; gap: 15px; }
         .slider-container input[type="range"] { flex-grow: 1; margin: 0; }
         .slider-container span { font-weight: bold; min-width: 3em; text-align: right; }
-        .button-group { display: flex; gap: 10px; margin-top: 1rem; }
+        .button-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 1rem; }
         button { flex-grow: 1; background-color: #007bff; color: white; padding: 12px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; transition: background-color 0.2s; }
         button:disabled { background-color: #cccccc; cursor: not-allowed; }
         button:hover:not(:disabled) { background-color: #0056b3; }
@@ -23,12 +23,12 @@
         .player-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; background-color: #f9f9f9; }
         .player-card p { margin: 0 0 10px 0; word-break: break-all; }
         .player-card audio { width: 100%; margin-bottom: 10px; }
-        .player-card .download-link { font-size: 14px; background-color: #28a745; color: white; padding: 8px 12px; border-radius: 4px; text-decoration: none; display: inline-block; text-align: center; }
-        .player-card .download-link:hover { background-color: #218838; }
+        .download-link { font-size: 14px; background-color: #28a745; color: white; padding: 8px 12px; border-radius: 4px; text-decoration: none; display: inline-block; text-align: center; }
+        .download-link:hover { background-color: #218838; }
     </style>
 </head>
 <body>
-    <h1>Cloudflare Aivis TTS (動的設定対応版)</h1>
+    <h1>Cloudflare Aivis TTS (WAV版)</h1>
     
     <div>
         <label for="model-select">音声モデル:</label>
@@ -40,8 +40,8 @@
 
     <div class="grid-container">
         <div>
-            <label for="style-select">スタイル名:</label>
-            <select id="style-select"></select>
+            <label for="style-id-input">スタイルID (例: 0, 1, ...):</label>
+            <input type="number" id="style-id-input" value="0" min="0">
         </div>
         <div>
             <label for="style_strength">スタイル強度:</label>
@@ -66,11 +66,19 @@
     <div id="results-container"></div>
 
     <script>
+        // ★★★★★ 設定はここを書き換えるだけ ★★★★★
+        const AUDIO_CONFIG = {
+            format: 'wav',
+            contentType: 'audio/wav',
+            extension: 'wav'
+        };
+        // ★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
         const modelSelect = document.getElementById('model-select');
         const generateBtn = document.getElementById('generate-btn');
         const downloadAllBtn = document.getElementById('download-all-btn');
         const textInput = document.getElementById('text');
-        const styleSelect = document.getElementById('style-select');
+        const styleIdInput = document.getElementById('style-id-input');
         const styleStrengthInput = document.getElementById('style_strength');
         const strengthValueSpan = document.getElementById('strength-value');
         const generateCountInput = document.getElementById('generate_count');
@@ -80,97 +88,23 @@
         const MAX_CHARS_PER_LINE = 50;
         const MAX_GENERATE_COUNT = 10;
         
-        let currentSettings = {};
-
         const setStatus = (message, isError = false) => {
             statusDiv.textContent = message;
             statusDiv.className = isError ? 'status-error' : 'status-info';
         };
 
-        const loadModelData = async (modelId) => {
-            if (modelId === null || modelId === undefined) return;
-            setStatus(`モデル[ID:${modelId}]の情報を読み込み中...`);
-            generateBtn.disabled = true;
-            styleSelect.innerHTML = '<option>読み込み中...</option>';
-
-            try {
-                const stylesRes = await fetch(`/get-styles?id=${modelId}`);
-                if (!stylesRes.ok) {
-                    throw new Error(`スタイルの取得に失敗: ${await stylesRes.text()}`);
-                }
-                const styles = await stylesRes.json();
-
-                const settingsRes = await fetch(`/settings/${modelId}.json`);
-                if (settingsRes.ok) {
-                    currentSettings = await settingsRes.json();
-                } else {
-                    console.warn(`設定ファイル /settings/${modelId}.json が見つかりません。デフォルト設定を生成します。`);
-                    const defaultMappings = {};
-                    styles.forEach(style => {
-                        defaultMappings[style.name] = { displayName: "", recommendedStrength: 1.0 };
-                    });
-                    currentSettings = {
-                        styleMappings: defaultMappings,
-                        defaultStyle: styles.length > 0 ? styles[0].name : null, 
-                        defaultStrength: 1.0
-                    };
-                }
-
-                populateStyleSelect(styles);
-                setStatus('準備完了');
-            } catch (error) {
-                setStatus(`モデル情報の読み込みエラー: ${error.message}`, true);
-                styleSelect.innerHTML = '<option>取得失敗</option>';
-            } finally {
-                generateBtn.disabled = false;
-            }
-        };
-
-        const populateStyleSelect = (styles) => {
-            styleSelect.innerHTML = '';
-            const mappings = currentSettings.styleMappings || {};
-
-            styles.forEach(style => {
-                const mapping = mappings[style.name];
-                let displayName = style.name;
-
-                if (mapping?.displayName === "hide_style") {
-                    return; 
-                }
-                if (mapping?.displayName) {
-                    displayName = mapping.displayName;
-                }
-
-                const option = document.createElement('option');
-                option.value = style.name;
-                option.textContent = displayName;
-                option.dataset.recommendedStrength = mapping?.recommendedStrength;
-                styleSelect.appendChild(option);
-            });
-
-            if (styleSelect.options.length === 0) {
-                 styleSelect.innerHTML = '<option>スタイルなし</option>';
-            }
-
-            if (currentSettings.defaultStyle && styleSelect.querySelector(`option[value="${currentSettings.defaultStyle}"]`)) {
-                styleSelect.value = currentSettings.defaultStyle;
-            }
-            
-            updateStrengthSlider();
-        };
-
-        const updateStrengthSlider = () => {
-            const selectedOption = styleSelect.options[styleSelect.selectedIndex];
-            const strength = selectedOption?.dataset.recommendedStrength || currentSettings.defaultStrength || 1.0;
-            styleStrengthInput.value = strength;
-            strengthValueSpan.textContent = parseFloat(strength).toFixed(2);
+        const loadModelData = (modelId) => {
+            if (!modelId) return;
+            styleStrengthInput.value = 1.0;
+            strengthValueSpan.textContent = parseFloat(styleStrengthInput.value).toFixed(2);
+            setStatus('準備完了');
+            generateBtn.disabled = false;
         };
         
         const init = async () => {
             try {
                 const response = await fetch('/get-models');
                 if (!response.ok) throw new Error(`モデル一覧の取得に失敗: ${await response.text()}`);
-                
                 const models = await response.json();
                 modelSelect.innerHTML = '';
                 models.forEach(model => {
@@ -179,11 +113,10 @@
                     option.textContent = model.name;
                     modelSelect.appendChild(option);
                 });
-
                 if (models.length > 0) {
-                    await loadModelData(models[0].id);
+                    loadModelData(models[0].id);
                 } else {
-                     setStatus('利用可能なモデルがありません。環境変数を確認してください。', true);
+                     setStatus('利用可能なモデルがありません。', true);
                      modelSelect.innerHTML = '<option>モデルなし</option>';
                 }
             } catch (error) {
@@ -193,8 +126,7 @@
         
         const updateUiState = () => {
             const lines = textInput.value.split('\n').filter(line => line.trim() !== '');
-            const isSingleLine = lines.length === 1;
-            generateCountInput.disabled = !isSingleLine;
+            generateCountInput.disabled = lines.length !== 1;
             downloadAllBtn.disabled = lines.length < 2;
             if (lines.length > 1) { generateCountInput.value = 1; }
         };
@@ -202,14 +134,10 @@
         const validateInput = (lines) => {
             const errors = [];
             if (lines.length > MAX_LINES) errors.push(`最大${MAX_LINES}行までです。`);
-            const longLine = lines.find(line => line.length > MAX_CHARS_PER_LINE);
-            if (longLine) errors.push(`1行あたり最大${MAX_CHARS_PER_LINE}文字までです。`);
-            if (!generateCountInput.disabled && parseInt(generateCountInput.value, 10) > MAX_GENERATE_COUNT) {
-                errors.push(`生成数は最大${MAX_GENERATE_COUNT}までです。`);
-            }
-            if (errors.length > 0) {
-                setStatus(errors.join(' / '), true); return false;
-            }
+            if (lines.find(line => line.length > MAX_CHARS_PER_LINE)) errors.push(`1行あたり最大${MAX_CHARS_PER_LINE}文字までです。`);
+            if (!generateCountInput.disabled && parseInt(generateCountInput.value, 10) > MAX_GENERATE_COUNT) errors.push(`生成数は最大${MAX_GENERATE_COUNT}までです。`);
+            if (styleIdInput.value === '' || isNaN(parseInt(styleIdInput.value, 10))) errors.push('スタイルIDは数字で入力してください。');
+            if (errors.length > 0) { setStatus(errors.join(' / '), true); return false; }
             return true;
         };
         
@@ -225,63 +153,62 @@
             return new Blob(byteArrays, { type: contentType });
         };
         
-        const processAudioRequest = async (linesToProcess, isDownloadAll = false) => {
-             if (!validateInput(linesToProcess) || linesToProcess.length === 0) return;
+        const createSafeFileName = (modelName, text, extension) => {
+            const safeText = text.substring(0, 30).replace(/[\\/:*?"<>|]/g, '_').trim();
+            return `${modelName}_${safeText}.${extension}`;
+        };
+        
+        const processAudioRequest = async (linesToProcess) => {
+            if (!validateInput(linesToProcess) || linesToProcess.length === 0) return null;
             generateBtn.disabled = true; downloadAllBtn.disabled = true;
             setStatus(`${linesToProcess.length}件の音声を生成中...`);
-            resultsContainer.innerHTML = '';
-
-            const requestBody = {
-                model_id: modelSelect.value,
-                texts: linesToProcess,
-                style_name: styleSelect.value,
-                style_strength: parseFloat(styleStrengthInput.value),
-            };
-
+            
             try {
                 const response = await fetch('/synthesize', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify({
+                        model_id: modelSelect.value,
+                        texts: linesToProcess,
+                        style_id: styleIdInput.value,
+                        style_strength: parseFloat(styleStrengthInput.value),
+                    })
                 });
-                if (!response.ok) throw new Error(`サーバーエラー: ${await response.text()}`);
+                if (!response.ok) throw new Error(`APIエラー (${response.status}): ${await response.text()}`);
                 const results = await response.json();
-                
-                if (isDownloadAll) {
-                    const singleResult = results[0];
-                    if(singleResult.status === 'success') {
-                        const blob = base64ToBlob(singleResult.audio_base64, singleResult.content_type);
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a'); a.href = url; a.download = 'aivis_output_all.opus';
-                        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-                        setStatus('全結合音声のダウンロードを開始しました。');
-                    } else { throw new Error(singleResult.reason); }
-                    return;
-                }
-                let successCount = 0;
-                results.forEach((result, index) => {
-                    if (result.status === 'success') {
-                        createPlayerCard(result.text, base64ToBlob(result.audio_base64, result.content_type), index);
-                        successCount++;
-                    } else { createErrorCard(result.text, new Error(result.reason), index); }
-                });
-                setStatus(`${successCount} / ${results.length} 件の音声を生成しました。`);
+                return results;
             } catch (error) {
-                setStatus(`エラー: ${error.message}`, true);
+                setStatus(error.message, true);
+                return null;
             } finally {
                 generateBtn.disabled = false; updateUiState();
             }
         };
 
         const createPlayerCard = (text, audioBlob, index) => {
-            const card = document.createElement('div'); card.className = 'player-card';
-            const textP = document.createElement('p'); textP.textContent = `[${index + 1}] ${text}`;
-            const audio = new Audio(); audio.src = URL.createObjectURL(audioBlob); audio.controls = true;
-            const downloadLink = document.createElement('a'); downloadLink.href = audio.src;
-            downloadLink.textContent = 'この音声をダウンロード (.opus)'; downloadLink.download = `aivis_output_${index + 1}.opus`; downloadLink.className = 'download-link';
-            card.appendChild(textP); card.appendChild(audio); card.appendChild(downloadLink);
+            const modelName = modelSelect.options[modelSelect.selectedIndex].text;
+            const card = document.createElement('div');
+            card.className = 'player-card';
+            
+            const textP = document.createElement('p');
+            textP.textContent = `[${index + 1}] ${text}`;
+            
+            const audio = new Audio();
+            audio.src = URL.createObjectURL(audioBlob);
+            audio.controls = true;
+            
+            const downloadLink = document.createElement('a');
+            downloadLink.href = audio.src;
+            downloadLink.textContent = `${AUDIO_CONFIG.extension.toUpperCase()}でダウンロード`;
+            downloadLink.className = 'download-link';
+            downloadLink.download = createSafeFileName(modelName, text, AUDIO_CONFIG.extension);
+
+            card.appendChild(textP);
+            card.appendChild(audio);
+            card.appendChild(downloadLink);
             resultsContainer.appendChild(card);
         };
+        
         const createErrorCard = (text, error, index) => {
             const card = document.createElement('div'); card.className = 'player-card'; card.style.backgroundColor = '#f8d7da';
             const textP = document.createElement('p'); textP.textContent = `[${index + 1}] ${text}`;
@@ -289,27 +216,57 @@
             card.appendChild(textP); card.appendChild(errorP); resultsContainer.appendChild(card);
         };
 
-        generateBtn.addEventListener('click', () => {
+        generateBtn.addEventListener('click', async () => {
+            resultsContainer.innerHTML = '';
             let lines = textInput.value.split('\n').filter(line => line.trim() !== '');
             if (lines.length === 1 && parseInt(generateCountInput.value, 10) > 1) {
-                const singleLine = lines[0];
                 const count = Math.min(parseInt(generateCountInput.value, 10), MAX_GENERATE_COUNT);
-                lines = Array.from({ length: count }, () => singleLine);
+                lines = Array.from({ length: count }, () => lines[0]);
             }
-            processAudioRequest(lines);
+            const results = await processAudioRequest(lines);
+            if (!results) return;
+
+            let successCount = 0;
+            results.forEach((result, index) => {
+                if (result.status === 'success') {
+                    createPlayerCard(result.text, base64ToBlob(result.audio_base64, result.content_type), index);
+                    successCount++;
+                } else { createErrorCard(result.text, new Error(result.reason), index); }
+            });
+            setStatus(`${successCount} / ${results.length} 件の音声を生成しました。`);
         });
-        downloadAllBtn.addEventListener('click', () => {
+
+        downloadAllBtn.addEventListener('click', async () => {
             const lines = textInput.value.split('\n').filter(line => line.trim() !== '');
             if (lines.length === 0) return;
-            processAudioRequest([lines.join(' ')], true);
+
+            const results = await processAudioRequest([lines.join(' ')]);
+            if (!results || results[0].status !== 'success') {
+                if(results) setStatus(`結合音声の生成に失敗: ${results[0].reason}`, true);
+                return;
+            }
+
+            const result = results[0];
+            const modelName = modelSelect.options[modelSelect.selectedIndex].text;
+            const audioBlob = base64ToBlob(result.audio_base_64, result.content_type);
+            
+            const url = URL.createObjectURL(audioBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = createSafeFileName(modelName, result.text, AUDIO_CONFIG.extension);
+            a.click();
+            URL.revokeObjectURL(url);
+            setStatus(`全結合音声 (${AUDIO_CONFIG.extension.toUpperCase()}) のダウンロードを開始しました。`);
         });
 
         modelSelect.addEventListener('change', (e) => loadModelData(e.target.value));
-        styleSelect.addEventListener('change', updateStrengthSlider);
         styleStrengthInput.addEventListener('input', () => { strengthValueSpan.textContent = parseFloat(styleStrengthInput.value).toFixed(2); });
         textInput.addEventListener('input', updateUiState);
         generateCountInput.addEventListener('input', updateUiState);
-        window.addEventListener('load', () => { init(); updateUiState(); });
+        window.addEventListener('load', () => { 
+            init(); 
+            updateUiState(); 
+        });
     </script>
 </body>
 </html>

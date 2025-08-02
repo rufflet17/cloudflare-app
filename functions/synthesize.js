@@ -1,43 +1,49 @@
 // functions/synthesize.js
 
-// ★★★★★ ここからが修正点 ★★★★★
+// ★★★★★ 設定はここを書き換えるだけ ★★★★★
+const AUDIO_CONFIG = {
+    format: 'wav',         // Aivis APIにリクエストするフォーマット名
+    contentType: 'audio/wav', // HTTPレスポンスやBlobで使うContent-Type
+    extension: 'wav'         // ダウンロード時のファイル拡張子
+};
+// 例: MP3に変更する場合
+/*
+const AUDIO_CONFIG = {
+    format: 'mp3',
+    contentType: 'audio/mpeg',
+    extension: 'mp3'
+};
+*/
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
 /**
  * ArrayBufferをBase64文字列に変換するヘルパー関数
- * Bufferオブジェクトが使えないCloudflareの環境で動作します。
- * @param {ArrayBuffer} buffer - 変換するArrayBuffer
- * @returns {string} Base64エンコードされた文字列
  */
 function arrayBufferToBase64(buffer) {
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  // btoaはWeb標準のAPIで、Cloudflare Workers/Functionsで利用可能です
-  return btoa(binary);
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
 }
-// ★★★★★ ここまでが修正点 ★★★★★
-
 
 /**
- * Aivis API v1/tts/synthesize に単一の音声合成リクエストを送信するヘルパー関数
+ * Aivis APIに単一の音声合成リクエストを送信するヘルパー関数
  */
 async function synthesizeSingleText(text, modelUuid, apiKey, options) {
-    const { style_name, style_strength } = options;
-    const aivisApiUrl = "https://api.aivis-project.com/v1/tts/synthesize";
+    const { style_id, style_strength } = options;
+    
+    // 設定オブジェクトからAPIリクエストURLを動的に生成
+    const aivisApiUrl = `https://api.aivis-project.com/v1/tts/synthesize?format=${AUDIO_CONFIG.format}`;
 
     const requestPayload = {
         text: text,
         model_uuid: modelUuid,
+        style_id: Number(style_id),
+        style_strength: style_strength
     };
-    
-    if (style_name && style_name !== "取得失敗") {
-        requestPayload.style_name = style_name;
-        if (style_strength !== null && style_strength !== undefined) {
-            requestPayload.emotional_intensity = style_strength;
-        }
-    }
     
     try {
         const aivisResponse = await fetch(aivisApiUrl, {
@@ -59,19 +65,13 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options) {
         }
 
         const audioArrayBuffer = await aivisResponse.arrayBuffer();
-        
-        // ★★★★★ ここからが修正点 ★★★★★
-        // Buffer.from(...) の代わりに、上で定義したヘルパー関数を使用します。
         const audioBase64 = arrayBufferToBase64(audioArrayBuffer);
-        // ★★★★★ ここまでが修正点 ★★★★★
-
-        const contentType = aivisResponse.headers.get('Content-Type') || 'audio/mpeg';
-
+        
         return {
             status: 'success',
             text: text,
             audio_base64: audioBase64,
-            content_type: contentType
+            content_type: AUDIO_CONFIG.contentType // 設定オブジェクトからContent-Typeを使用
         };
 
     } catch (e) {
@@ -83,14 +83,13 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options) {
     }
 }
 
-
 /**
- * メインのリクエストハンドラー (変更なし)
+ * メインのリクエストハンドラー
  */
 async function handleRequest(context) {
     const { env } = context;
     const body = await context.request.json();
-    const { model_id, texts, style_name, style_strength } = body;
+    const { model_id, texts, style_id, style_strength } = body;
 
     if (!texts || !Array.isArray(texts) || texts.length === 0) {
         return new Response("リクエストボディに 'texts' (配列) が必要です。", { status: 400 });
@@ -109,7 +108,7 @@ async function handleRequest(context) {
         return new Response(`サーバーエラー: モデルID ${model_id} のUUIDが見つかりません。`, { status: 400 });
     }
     
-    const options = { style_name, style_strength };
+    const options = { style_id, style_strength };
     
     const results = await Promise.all(
         texts.map(text => synthesizeSingleText(text, targetModelUuid, apiKey, options))
@@ -120,13 +119,31 @@ async function handleRequest(context) {
     });
 }
 
+/**
+ * Cloudflare Functionsのエントリポイント
+ */
 export async function onRequest(context) {
+    if (context.request.method === 'OPTIONS') {
+        return new Response(null, {
+            headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type',
+            },
+        });
+    }
+
     if (context.request.method !== "POST") {
         return new Response("POSTメソッドを使用してください", { status: 405 });
     }
+
     try {
-        return await handleRequest(context);
+        const response = await handleRequest(context);
+        response.headers.set('Access-Control-Allow-Origin', '*');
+        return response;
     } catch (e) {
-        return new Response(`サーバー内部で予期せぬエラーが発生しました: ${e.message}`, { status: 500 });
+        const errorResponse = new Response(`サーバー内部で予期せぬエラーが発生しました: ${e.message}`, { status: 500 });
+        errorResponse.headers.set('Access-Control-Allow-Origin', '*');
+        return errorResponse;
     }
 }
