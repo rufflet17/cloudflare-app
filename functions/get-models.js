@@ -10,17 +10,18 @@ export async function onRequest(context) {
 
   const models = [];
   for (let i = 0; i < modelCount; i++) {
+    // ★★★ 修正点: MODEL_UUIDのみを読み込む ★★★
     const uuid = env[`MODEL_UUID_${i}`];
-    const name = env[`MODEL_NAME_${i}`];
 
-    if (uuid && name) {
+    // UUIDが存在する場合のみリストに追加
+    if (uuid) {
       models.push({
         id: i, // 0から始まるID
-        name: name,
+        // ★★★ 修正点: モデル名を自動で生成する ★★★
+        name: `モデル ${i + 1}`, // 例: 「モデル 1」「モデル 2」
       });
     } else {
-      // 運用上、ログに警告を残しておくとデバッグに便利
-      console.warn(`モデルID ${i} の環境変数 (MODEL_UUID_${i} または MODEL_NAME_${i}) が不足しているため、スキップされました。`);
+      console.warn(`モデルID ${i} の環境変数 (MODEL_UUID_${i}) が不足しているため、スキップされました。`);
     }
   }
 
