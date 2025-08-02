@@ -1,5 +1,25 @@
 // functions/synthesize.js
 
+// ★★★★★ ここからが修正点 ★★★★★
+/**
+ * ArrayBufferをBase64文字列に変換するヘルパー関数
+ * Bufferオブジェクトが使えないCloudflareの環境で動作します。
+ * @param {ArrayBuffer} buffer - 変換するArrayBuffer
+ * @returns {string} Base64エンコードされた文字列
+ */
+function arrayBufferToBase64(buffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  // btoaはWeb標準のAPIで、Cloudflare Workers/Functionsで利用可能です
+  return btoa(binary);
+}
+// ★★★★★ ここまでが修正点 ★★★★★
+
+
 /**
  * Aivis API v1/tts/synthesize に単一の音声合成リクエストを送信するヘルパー関数
  */
@@ -38,26 +58,21 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options) {
             };
         }
 
-        // ★★★★★ ここからが最重要修正点 ★★★★★
-
-        // 1. APIからの応答をJSONではなく、生のバイナリデータ(ArrayBuffer)として取得します。
         const audioArrayBuffer = await aivisResponse.arrayBuffer();
+        
+        // ★★★★★ ここからが修正点 ★★★★★
+        // Buffer.from(...) の代わりに、上で定義したヘルパー関数を使用します。
+        const audioBase64 = arrayBufferToBase64(audioArrayBuffer);
+        // ★★★★★ ここまでが修正点 ★★★★★
 
-        // 2. 取得したバイナリデータをBase64形式の文字列に変換します。
-        // Cloudflare WorkersではBufferが利用できます。
-        const audioBase64 = Buffer.from(audioArrayBuffer).toString('base64');
+        const contentType = aivisResponse.headers.get('Content-Type') || 'audio/mpeg';
 
-        // 3. レスポンスヘッダーからContent-Typeを取得します。
-        const contentType = aivisResponse.headers.get('Content-Type') || 'audio/mpeg'; // MP3の場合のデフォルト
-
-        // 4. フロントエンドが期待する形式の成功オブジェクトを組み立てて返します。
         return {
             status: 'success',
-            text: text, // APIはテキストを返さないので、リクエストしたテキストを使用
+            text: text,
             audio_base64: audioBase64,
             content_type: contentType
         };
-        // ★★★★★ ここまでが最重要修正点 ★★★★★
 
     } catch (e) {
         return {
@@ -70,14 +85,13 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options) {
 
 
 /**
- * メインのリクエストハンドラー
+ * メインのリクエストハンドラー (変更なし)
  */
 async function handleRequest(context) {
     const { env } = context;
     const body = await context.request.json();
     const { model_id, texts, style_name, style_strength } = body;
 
-    // --- バリデーション (変更なし) ---
     if (!texts || !Array.isArray(texts) || texts.length === 0) {
         return new Response("リクエストボディに 'texts' (配列) が必要です。", { status: 400 });
     }
@@ -95,7 +109,6 @@ async function handleRequest(context) {
         return new Response(`サーバーエラー: モデルID ${model_id} のUUIDが見つかりません。`, { status: 400 });
     }
     
-    // --- 複数テキストのAPIリクエストを並行して実行 (変更なし) ---
     const options = { style_name, style_strength };
     
     const results = await Promise.all(
