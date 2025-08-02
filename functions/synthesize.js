@@ -1,77 +1,84 @@
 // functions/synthesize.js
 
-const API_URL = "https://api.aivis-project.com/v1/tts/synthesize";
-const MAX_LINES_PER_REQUEST = 10;
+async function handleRequest(context) {
+    const { env } = context;
+    const body = await context.request.json();
+    const { model_id, texts, style_name, style_strength } = body;
 
-function arrayBufferToBase64(buffer) {
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
+    // --- バリデーション ---
+    if (!texts || !Array.isArray(texts) || texts.length === 0) {
+        return new Response("リクエストボディに 'texts' (配列) が必要です。", { status: 400 });
+    }
+    if (model_id === undefined || model_id === null) {
+        return new Response("リクエストボディに 'model_id' が必要です。", { status: 400 });
+    }
+    
+    const targetUuid = env[`MODEL_UUID_${model_id}`];
+    const apiKey = env.API_KEY;
 
-async function synthesizeSingleText(text, commonPayload) {
-  const payload = { ...commonPayload, text };
-  const aivisResponse = await fetch(API_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${commonPayload.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!aivisResponse.ok) {
-    const errorText = await aivisResponse.text();
-    throw new Error(`Aivis APIエラー: ${errorText}`);
-  }
-  const audioArrayBuffer = await aivisResponse.arrayBuffer();
-  const contentType = aivisResponse.headers.get('Content-Type');
-  return {
-    text: text,
-    status: 'success',
-    audio_base64: arrayBufferToBase64(audioArrayBuffer),
-    content_type: contentType,
-  };
+    if (!apiKey) {
+        return new Response("サーバー側の環境変数エラー: API_KEYが設定されていません。", { status: 500 });
+    }
+    if (!targetUuid) {
+        return new Response(`サーバーエラー: モデルID ${model_id} に対応するUUIDが見つかりません。`, { status: 400 });
+    }
+    
+    // Aivis APIへのリクエストを構築
+    // API仕様に合わせて、複数テキストを結合するか、個別にリクエストするかを選択
+    const requestPayload = {
+        speaker_uuid: targetUuid,
+        text: texts.join("\n"), // 複数テキストを改行で結合する例
+        style: style_name,
+        style_strength: style_strength,
+    };
+
+    const aivisApiUrl = "https://api.aivis-project.com/v1/text2speech";
+    const aivisResponse = await fetch(aivisApiUrl, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestPayload)
+    });
+
+    if (!aivisResponse.ok) {
+        return new Response(`Aivis APIエラー: ${await aivisResponse.text()}`, { status: aivisResponse.status });
+    }
+
+    // APIからのレスポンスをフロントエンドが期待する形式に変換
+    const aivisData = await aivisResponse.json();
+    
+    // Aivis APIが個別の音声データを配列で返すことを想定した処理例
+    const results = texts.map((text, index) => {
+        const audioData = aivisData[index];
+        if (audioData) {
+            return {
+                status: 'success',
+                text: text,
+                audio_base64: audioData.audio_base64,
+                content_type: audioData.content_type || 'audio/opus'
+            };
+        }
+        return {
+            status: 'error',
+            text: text,
+            reason: 'APIから対応する音声データが返されませんでした。'
+        };
+    });
+
+    return new Response(JSON.stringify(results), {
+        headers: { 'Content-Type': 'application/json' }
+    });
 }
 
 export async function onRequest(context) {
-  if (context.request.method !== "POST") {
-    return new Response("POSTメソッドを使用してください", { status: 405 });
-  }
-  try {
-    const clientData = await context.request.json();
-    if (!Array.isArray(clientData.texts) || clientData.texts.length === 0) {
-      return new Response("texts (配列) が必要です。", { status: 400 });
+    if (context.request.method !== "POST") {
+        return new Response("POSTメソッドを使用してください", { status: 405 });
     }
-    if (clientData.texts.length > MAX_LINES_PER_REQUEST) {
-      return new Response(`一度に処理できるのは最大${MAX_LINES_PER_REQUEST}行までです。`, { status: 400 });
+    try {
+        return await handleRequest(context);
+    } catch (e) {
+        return new Response(`サーバー内部で予期せぬエラーが発生しました: ${e.message}`, { status: 500 });
     }
-    const { API_KEY, MODEL_UUID } = context.env;
-    if (!API_KEY || !MODEL_UUID) {
-      return new Response("サーバー側でAPIキーまたはモデルUUIDが設定されていません。", { status: 500 });
-    }
-    const commonPayload = {
-      model_uuid: MODEL_UUID,
-      apiKey: API_KEY,
-      use_ssml: false,
-      output_format: "opus",
-      language: "ja",
-    };
-    if (clientData.style_name) {
-      commonPayload.style_name = clientData.style_name;
-      commonPayload.style_strength = parseFloat(clientData.style_strength);
-    }
-    const promises = clientData.texts.map(text =>
-      synthesizeSingleText(text, commonPayload)
-        .catch(e => ({ text: text, status: 'error', reason: e.message }))
-    );
-    const results = await Promise.all(promises);
-    return new Response(JSON.stringify(results), {
-      headers: { 'Content-Type': 'application/json' },
-    });
-  } catch (e) {
-    return new Response(`サーバー内部エラー: ${e.message}`, { status: 500 });
-  }
 }
