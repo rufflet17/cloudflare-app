@@ -11,7 +11,7 @@
         button { flex-grow: 1; background-color: #007bff; color: white; padding: 12px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; transition: background-color 0.2s; }
         button:disabled { background-color: #cccccc; cursor: not-allowed; }
         button:hover:not(:disabled) { background-color: #0056b3; }
-        #status { margin-top: 15px; padding: 10px; border-radius: 4px; height: 1.5em; font-weight: bold; }
+        #status { margin-top: 15px; padding: 10px; border-radius: 4px; min-height: 1.5em; font-weight: bold; word-break: break-word; }
         .status-info { background-color: #e7f3fe; color: #004085; }
         .status-error { background-color: #f8d7da; color: #721c24; }
         #results-container { margin-top: 20px; display: flex; flex-direction: column; gap: 15px; }
@@ -30,7 +30,6 @@
 
     <div class="input-group">
         <div>
-            <!-- ★★★ UIの変更点 ★★★ -->
             <label for="style-select">スタイル名:</label>
             <select id="style-select">
                 <option value="">(デフォルト)</option>
@@ -60,26 +59,24 @@
         const generateBtn = document.getElementById('generate-btn');
         const downloadAllBtn = document.getElementById('download-all-btn');
         const textInput = document.getElementById('text');
-        const styleSelect = document.getElementById('style-select'); // ★★★ 変更点 ★★★
+        const styleSelect = document.getElementById('style-select');
         const styleStrengthInput = document.getElementById('style_strength');
         const generateCountInput = document.getElementById('generate_count');
         const statusDiv = document.getElementById('status');
         const resultsContainer = document.getElementById('results-container');
-        // ... (定数は変更なし)
         const MAX_LINES = 10;
         const MAX_CHARS_PER_LINE = 50;
         const MAX_GENERATE_COUNT = 10;
 
-        // ★★★ 新しい関数: ページ読み込み時にスタイルを非同期で取得する ★★★
         const loadStyles = async () => {
             try {
                 const response = await fetch('/get-styles');
                 if (!response.ok) {
-                    throw new Error('スタイルの取得に失敗しました。');
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'スタイルの取得に失敗しました。サーバーからの応答がありません。');
                 }
                 const styles = await response.json();
                 
-                // 取得したスタイルをドロップダウンに追加
                 styles.forEach(style => {
                     const option = document.createElement('option');
                     option.value = style.name;
@@ -88,35 +85,39 @@
                 });
             } catch (error) {
                 console.error(error);
-                statusDiv.textContent = 'エラー: スタイルリストの読み込みに失敗しました。';
+                statusDiv.textContent = `エラー: ${error.message}`;
                 statusDiv.className = 'status-error';
             }
         };
 
-        // UI制御 (変更なし)
         const updateUiState = () => {
             const lines = textInput.value.split('\n').filter(line => line.trim() !== '');
             const isSingleLine = lines.length === 1;
             generateCountInput.disabled = !isSingleLine;
-            downloadAllBtn.disabled = isSingleLine && generateCountInput.value > 1;
+            downloadAllBtn.disabled = isSingleLine && parseInt(generateCountInput.value, 10) > 1;
             if (lines.length > 1) { generateCountInput.value = 1; }
         };
+
         textInput.addEventListener('input', updateUiState);
         generateCountInput.addEventListener('input', updateUiState);
         
-        // ★★★ ページ読み込み時にUI更新とスタイル取得を実行 ★★★
         window.addEventListener('load', () => {
             updateUiState();
             loadStyles();
         });
 
-        // バリデーション (変更なし)
         const validateInput = (lines) => {
             const errors = [];
-            if (lines.length > MAX_LINES) errors.push(`最大${MAX_LINES}行までです。`);
+            if (lines.length > MAX_LINES) {
+                errors.push(`最大${MAX_LINES}行までです。(現在 ${lines.length}行)`);
+            }
             const longLine = lines.find(line => line.length > MAX_CHARS_PER_LINE);
-            if (longLine) errors.push(`1行あたり最大${MAX_CHARS_PER_LINE}文字までです。`);
-            if (!generateCountInput.disabled && parseInt(generateCountInput.value, 10) > MAX_GENERATE_COUNT) errors.push(`生成数は最大${MAX_GENERATE_COUNT}までです。`);
+            if (longLine) {
+                errors.push(`1行あたり最大${MAX_CHARS_PER_LINE}文字までです。(${longLine.substring(0, 10)}... が長すぎます)`);
+            }
+            if (!generateCountInput.disabled && parseInt(generateCountInput.value, 10) > MAX_GENERATE_COUNT) {
+                errors.push(`生成数は最大${MAX_GENERATE_COUNT}までです。`);
+            }
             if (errors.length > 0) {
                 statusDiv.textContent = errors.join(' / ');
                 statusDiv.className = 'status-error';
@@ -125,7 +126,6 @@
             return true;
         };
         
-        // Base64デコード関数 (変更なし)
         const base64ToBlob = (base64, contentType) => {
             const byteCharacters = atob(base64);
             const byteArrays = [];
@@ -140,48 +140,65 @@
             return new Blob(byteArrays, { type: contentType });
         };
         
-        // ★★★ 一括リクエスト処理 (styleSelectから値を取得するように変更) ★★★
-        const processAudioRequest = async (linesToProcess) => {
+        const processAudioRequest = async (linesToProcess, isDownloadAll = false) => {
              if (!validateInput(linesToProcess) || linesToProcess.length === 0) return;
+
             generateBtn.disabled = true;
             downloadAllBtn.disabled = true;
             statusDiv.textContent = `${linesToProcess.length}件の音声を生成中...`;
             statusDiv.className = 'status-info';
             resultsContainer.innerHTML = '';
+
             const requestBody = {
                 texts: linesToProcess,
-                style_name: styleSelect.value || null, // selectから値を取得
+                style_name: styleSelect.value || null,
                 style_strength: styleSelect.value ? parseFloat(styleStrengthInput.value) : null,
             };
+
             try {
                 const response = await fetch('/synthesize', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestBody)
                 });
-                if (!response.ok) throw new Error(`サーバーエラー: ${await response.text()}`);
+
+                if (!response.ok) {
+                    throw new Error(`サーバーエラー: ${await response.text()}`);
+                }
+
                 const results = await response.json();
-                // ... (以降の処理は変更なし)
-                if (linesToProcess.length === 1 && downloadAllBtn.disabled) {
+                
+                if (isDownloadAll) {
                     const singleResult = results[0];
                     if(singleResult.status === 'success') {
                         const blob = base64ToBlob(singleResult.audio_base64, singleResult.content_type);
                         const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a'); a.href = url; a.download = 'aivis_output_all.opus';
-                        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'aivis_output_all.opus';
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        URL.revokeObjectURL(url);
                         statusDiv.textContent = '全結合音声のダウンロードを開始しました。';
-                    } else { throw new Error(singleResult.reason); }
+                    } else {
+                        throw new Error(singleResult.reason);
+                    }
                     return;
                 }
+
                 let successCount = 0;
                 results.forEach((result, index) => {
                     if (result.status === 'success') {
                         const blob = base64ToBlob(result.audio_base64, result.content_type);
                         createPlayerCard(result.text, blob, index);
                         successCount++;
-                    } else { createErrorCard(result.text, new Error(result.reason), index); }
+                    } else {
+                        createErrorCard(result.text, new Error(result.reason), index);
+                    }
                 });
                 statusDiv.textContent = `${successCount} / ${results.length} 件の音声を生成しました。`;
+
             } catch (error) {
                 statusDiv.textContent = `エラー: ${error.message}`;
                 statusDiv.className = 'status-error';
@@ -191,49 +208,54 @@
             }
         };
 
-        // カード生成関数 (変更なし)
-        const createPlayerCard = (text, audioBlob, index) => { /* ... */ };
-        const createErrorCard = (text, error, index) => { /* ... */ };
-        (function(){ // 自己実行関数でスコープを汚さないようにする
-            const createPlayerCard_ = (text, audioBlob, index) => {
-                const card = document.createElement('div'); card.className = 'player-card';
-                const textP = document.createElement('p'); textP.textContent = `[${index + 1}] ${text}`;
-                const audio = new Audio(); audio.src = URL.createObjectURL(audioBlob); audio.controls = true;
-                const downloadLink = document.createElement('a'); downloadLink.href = audio.src; downloadLink.textContent = 'この音声をダウンロード (.opus)'; downloadLink.download = `aivis_output_${index + 1}.opus`; downloadLink.className = 'download-link';
-                card.appendChild(textP); card.appendChild(audio); card.appendChild(downloadLink);
-                resultsContainer.appendChild(card);
-            };
-            const createErrorCard_ = (text, error, index) => {
-                const card = document.createElement('div'); card.className = 'player-card'; card.style.backgroundColor = '#f8d7da';
-                const textP = document.createElement('p'); textP.textContent = `[${index + 1}] ${text}`;
-                const errorP = document.createElement('p'); errorP.textContent = `エラー: ${error.message}`; errorP.style.color = '#721c24'; errorP.style.fontWeight = 'bold';
-                card.appendChild(textP); card.appendChild(errorP); resultsContainer.appendChild(card);
-            };
-            window.createPlayerCard = createPlayerCard_;
-            window.createErrorCard = createErrorCard_;
-        })();
-        
-        // ★★★ イベントリスナー (生成数ロジックを変更) ★★★
+        const createPlayerCard = (text, audioBlob, index) => {
+            const card = document.createElement('div');
+            card.className = 'player-card';
+            const textP = document.createElement('p');
+            textP.textContent = `[${index + 1}] ${text}`;
+            const audio = new Audio();
+            audio.src = URL.createObjectURL(audioBlob);
+            audio.controls = true;
+            const downloadLink = document.createElement('a');
+            downloadLink.href = audio.src;
+            downloadLink.textContent = 'この音声をダウンロード (.opus)';
+            downloadLink.download = `aivis_output_${index + 1}.opus`;
+            downloadLink.className = 'download-link';
+            card.appendChild(textP);
+            card.appendChild(audio);
+            card.appendChild(downloadLink);
+            resultsContainer.appendChild(card);
+        };
+        const createErrorCard = (text, error, index) => {
+            const card = document.createElement('div');
+            card.className = 'player-card';
+            card.style.backgroundColor = '#f8d7da';
+            const textP = document.createElement('p');
+            textP.textContent = `[${index + 1}] ${text}`;
+            const errorP = document.createElement('p');
+            errorP.textContent = `エラー: ${error.message}`;
+            errorP.style.color = '#721c24';
+            errorP.style.fontWeight = 'bold';
+            card.appendChild(textP);
+            card.appendChild(errorP);
+            resultsContainer.appendChild(card);
+        };
+
         generateBtn.addEventListener('click', () => {
             let lines = textInput.value.split('\n').filter(line => line.trim() !== '');
-            
-            // ★★★ 生成数ロジックの変更点 ★★★
-            if (lines.length === 1 && generateCountInput.value > 1) {
+            if (lines.length === 1 && parseInt(generateCountInput.value, 10) > 1) {
                 const singleLine = lines[0];
                 const count = parseInt(generateCountInput.value, 10);
-                
-                // n番目のテキストに n-1 個のドットを付与する
-                // 例: count=3 -> ["text", "text.", "text.."]
                 lines = Array.from({ length: count }, (_, i) => singleLine + '.'.repeat(i));
             }
             processAudioRequest(lines);
         });
 
-        // 全結合ダウンロード (変更なし)
         downloadAllBtn.addEventListener('click', () => {
             const lines = textInput.value.split('\n').filter(line => line.trim() !== '');
             const fullText = lines.join(' ');
-            processAudioRequest([fullText]);
+            processAudioRequest([fullText], true);
+
         });
     </script>
 </body>
