@@ -26,7 +26,7 @@ export async function onRequest(context) {
 
     // ★★★ 修正点 ★★★
     // APIエンドポイントを /v1/models/ から /v1/aivms/ に修正
-    const aivisModelApiUrl = `https://api.aivis-project.com/v1/aivms/${trimmedModelUuid}`;
+    const aivisModelApiUrl = `https://api.aivis-project.com/v1/aivm-models/${trimmedModelUuid}`;
 
     // Aivis APIにリクエストを送信
     const aivisResponse = await fetch(aivisModelApiUrl, {
