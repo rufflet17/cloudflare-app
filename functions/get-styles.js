@@ -14,19 +14,23 @@ export async function onRequest(context) {
       return new Response("クエリパラメータ 'id' が必要です。", { status: 400 });
     }
 
-    const targetUuid = env[`MODEL_UUID_${modelId}`];
+    // ★★★ 修正点1: 変数名を明確化 ★★★
+    // 環境変数に設定されているのは「話者」のUUIDなので、変数名をそれに合わせます。
+    const targetSpeakerUuid = env[`MODEL_UUID_${modelId}`];
     const apiKey = env.API_KEY;
 
     if (!apiKey) {
       return new Response("サーバー側の環境変数エラー: API_KEYが設定されていません。", { status: 500 });
     }
-    if (!targetUuid) {
+    if (!targetSpeakerUuid) {
       return new Response(`サーバーエラー: モデルID ${modelId} に対応するUUIDが見つかりません。`, { status: 404 });
     }
 
-    const aivisModelApiUrl = `https://api.aivis-project.com/v1/aivm-models/${targetUuid}`;
+    // ★★★ 修正点2: 呼び出すAPIのエンドポイントを /v1/speakers に変更 ★★★
+    // これがスタイル一覧を取得するための正しいAPIです。
+    const aivisSpeakersApiUrl = `https://api.aivis-project.com/v1/speakers`;
     
-    const aivisResponse = await fetch(aivisModelApiUrl, {
+    const aivisResponse = await fetch(aivisSpeakersApiUrl, {
       method: 'GET',
       headers: { 
         "Authorization": `Bearer ${apiKey}`,
@@ -39,18 +43,21 @@ export async function onRequest(context) {
       return new Response(`Aivis APIエラー (ステータス: ${aivisResponse.status}): ${errorText}`, { status: aivisResponse.status });
     }
     
-    const modelData = await aivisResponse.json();
+    // /v1/speakers は全話者のリストを配列で返します
+    const allSpeakers = await aivisResponse.json();
     
-    // スタイルを抽出してユニークにする
-    const allStyles = (modelData.speakers || []).flatMap(speaker => speaker.styles || []);
-    const uniqueStyles = allStyles.reduce((acc, current) => {
-      if (!acc.find(item => item.name === current.name)) {
-        acc.push(current);
-      }
-      return acc;
-    }, []);
+    // ★★★ 修正点3: 全話者リストから、目的のUUIDを持つ話者を探す ★★★
+    const targetSpeaker = allSpeakers.find(speaker => speaker.speaker_uuid === targetSpeakerUuid);
+
+    if (!targetSpeaker) {
+        // 目的の話者が見つからなかった場合
+        return new Response(JSON.stringify([]), { headers: { 'Content-Type': 'application/json' } });
+    }
+
+    // 見つかった話者のスタイルリストを返す (ユニーク処理は不要)
+    const styles = targetSpeaker.styles || [];
     
-    return new Response(JSON.stringify(uniqueStyles), { 
+    return new Response(JSON.stringify(styles), { 
       headers: { 'Content-Type': 'application/json' } 
     });
 
