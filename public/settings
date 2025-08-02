@@ -1,0 +1,13 @@
+{
+  "styleMappings": {
+    "ぶりっ子": {
+      "displayName": "可愛い声",
+      "recommendedStrength": 1.5
+    },
+    "テンション低め２": {
+      "displayName": ""
+    }
+  },
+  "defaultStyle": "ノーマル",
+  "defaultStrength": 1.0
+}
