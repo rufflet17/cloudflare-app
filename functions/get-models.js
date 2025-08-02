@@ -2,26 +2,38 @@
 
 export async function onRequest(context) {
   const { env } = context;
-  const modelCount = parseInt(env.MODEL_COUNT, 10);
-
-  if (isNaN(modelCount) || modelCount <= 0) {
-    return new Response("環境変数 'MODEL_COUNT' が未設定または無効な値です。", { status: 500 });
-  }
-
   const models = [];
-  for (let i = 0; i < modelCount; i++) {
-    // ★★★ 修正点: MODEL_UUIDのみを読み込む ★★★
-    const uuid = env[`MODEL_UUID_${i}`];
 
-    // UUIDが存在する場合のみリストに追加
-    if (uuid) {
+  // 環境変数オブジェクトのキーをすべて取得
+  const envKeys = Object.keys(env);
+
+  // 'MODEL_UUID_'で始まるキーを持つモデルのインデックス（番号）を抽出
+  const modelIndices = envKeys
+    .map(key => {
+      // キーが 'MODEL_UUID_' で始まるかチェック
+      if (key.startsWith('MODEL_UUID_')) {
+        // 'MODEL_UUID_' の後ろの数字部分を抜き出す
+        const indexStr = key.substring('MODEL_UUID_'.length);
+        const index = parseInt(indexStr, 10);
+        // 数字として正しく解釈できた場合のみ、その数字を返す
+        return !isNaN(index) ? index : null;
+      }
+      return null;
+    })
+    .filter(index => index !== null); // null（該当しないキー）を除外
+
+  // 抽出したインデックスを小さい順にソートする
+  // これにより、UI上のモデルの並び順が番号順に固定される
+  modelIndices.sort((a, b) => a - b);
+
+  // ソートされたインデックスを元にモデルリストを作成
+  for (const index of modelIndices) {
+    // 対応するUUIDが実際に存在することを確認（念のため）
+    if (env[`MODEL_UUID_${index}`]) {
       models.push({
-        id: i, // 0から始まるID
-        // ★★★ 修正点: モデル名を自動で生成する ★★★
-        name: `モデル ${i + 1}`, // 例: 「モデル 1」「モデル 2」
+        id: index, // 0, 1, 2... というID
+        name: `モデル ${index + 1}`, // UI表示名: 「モデル 1」「モデル 2」...
       });
-    } else {
-      console.warn(`モデルID ${i} の環境変数 (MODEL_UUID_${i}) が不足しているため、スキップされました。`);
     }
   }
 
