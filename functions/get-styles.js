@@ -24,7 +24,7 @@ export async function onRequest(context) {
       return new Response(`サーバーエラー: モデルID ${modelId} に対応するUUIDが見つかりません。`, { status: 404 });
     }
 
-    const aivisModelApiUrl = `https://api.aivis-project.com/v1/aivms/${targetUuid}`;
+    const aivisModelApiUrl = `https://api.aivis-project.com/v1/aivm-models/${targetUuid}`;
     
     const aivisResponse = await fetch(aivisModelApiUrl, {
       method: 'GET',
