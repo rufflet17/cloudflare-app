@@ -1,69 +1,81 @@
 // functions/get-styles.js
 
 export async function onRequest(context) {
+  // GETメソッド以外は受け付けない
   if (context.request.method !== "GET") {
     return new Response("GETメソッドを使用してください", { status: 405 });
   }
-  
+
   try {
     const { env, request } = context;
     const url = new URL(request.url);
-    const modelId = parseInt(url.searchParams.get('id'), 10);
+    // クエリパラメータから 'id' を取得
+    const modelId = url.searchParams.get('id');
 
-    if (isNaN(modelId)) {
-      return new Response("クエリパラメータ 'id' が必要です。", { status: 400 });
+    // 'id' が指定されていない、または数値に変換できない場合はエラー
+    if (!modelId || isNaN(parseInt(modelId, 10))) {
+      return new Response("クエリパラメータ 'id' が必要です。例: ?id=1", { status: 400 });
     }
 
-    // ★★★ 修正点1: 変数名を元の 'targetUuid' に戻す ★★★
-    // このAPIでは、モデル全体のUUIDを指定するため
-    const targetUuid = env[`MODEL_UUID_${modelId}`];
+    // 環境変数からAPIキーとモデルのUUIDを取得
     const apiKey = env.API_KEY;
+    const targetModelUuid = env[`MODEL_UUID_${modelId}`];
 
+    // 必要な環境変数が設定されているかチェック
     if (!apiKey) {
-      return new Response("サーバー側の環境変数エラー: API_KEYが設定されていません。", { status: 500 });
+      console.error("環境変数エラー: API_KEYが設定されていません。");
+      return new Response("サーバー側の設定エラーです。", { status: 500 });
     }
-    if (!targetUuid) {
-      return new Response(`サーバーエラー: モデルID ${modelId} に対応するUUIDが見つかりません。`, { status: 404 });
+    if (!targetModelUuid) {
+      console.error(`環境変数エラー: MODEL_UUID_${modelId} が見つかりません。`);
+      return new Response(`指定されたモデルID [${modelId}] に対応する設定が見つかりません。`, { status: 404 });
     }
 
-    // ★★★ 修正点2: APIエンドポイントを古いコードの形式に戻す ★★★
-    // URLの末尾に、目的のモデルのUUIDを埋め込みます
-    const aivisModelApiUrl = `https://api.aivis-project.com/v1/aivm-models/${targetUuid}`;
-    
+    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+    //
+    //                         ここからが修正箇所です
+    //
+    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+    // 1. 【修正点】APIドキュメントに基づいた正しいエンドポイントを指定します。
+    //    特定のモデル情報を取得するため、URLにモデルのUUIDを含めます。
+    const aivisModelApiUrl = `https://api.aivis-project.com/v1/models/${targetModelUuid}`;
+
+    // 2. Aivis APIへリクエストを送信します。
     const aivisResponse = await fetch(aivisModelApiUrl, {
       method: 'GET',
-      headers: { 
+      headers: {
         "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
       },
     });
 
+    // 3. APIからのレスポンスをチェックします。
     if (!aivisResponse.ok) {
       const errorText = await aivisResponse.text();
-      return new Response(`Aivis API (${aivisModelApiUrl}) エラー (ステータス: ${aivisResponse.status}): ${errorText}`, { status: aivisResponse.status });
-    }
-    
-    // ★★★ 修正点3: データ処理方法を古いコードの形式に戻す ★★★
-    // APIから返ってくるのは「単一のモデル情報オブジェクト」
-    const modelData = await aivisResponse.json();
-    
-    // そのオブジェクトの中から、話者(speakers)リストを取得し、
-    // 全ての話者が持つスタイルを一つの配列にまとめる
-    const allStyles = (modelData.speakers || []).flatMap(speaker => speaker.styles || []);
-    
-    // スタイル名で重複を排除する（複数の話者が同じスタイルを持つ場合のため）
-    const uniqueStyles = allStyles.reduce((acc, current) => {
-      if (!acc.find(item => item.name === current.name)) {
-        acc.push(current);
+      // 404 (Not Found) の場合は、UUIDが間違っている可能性が高いです。
+      if (aivisResponse.status === 404) {
+        return new Response(`Aivis APIエラー: 指定されたUUID [${targetModelUuid}] のモデルが見つかりませんでした。`, { status: 404 });
       }
-      return acc;
-    }, []);
-    
-    return new Response(JSON.stringify(uniqueStyles), { 
-      headers: { 'Content-Type': 'application/json' } 
+      // その他のエラー
+      return new Response(`Aivis API (${aivisModelApiUrl}) でエラーが発生しました (ステータス: ${aivisResponse.status}): ${errorText}`, { status: aivisResponse.status });
+    }
+
+    // 4. 【修正点】レスポンスのJSONから直接モデル情報を取得します。
+    //    全件取得して探す処理 (find) は不要になります。
+    const modelInfo = await aivisResponse.json();
+
+    // 5. モデル情報からスタイル(styles)のリストを抽出します。
+    //    stylesプロパティが存在しない場合に備えて、デフォルト値として空配列 `[]` を設定します。
+    const styles = modelInfo.styles || [];
+
+    // 6. 取得したスタイル情報をJSON形式で返します。
+    return new Response(JSON.stringify(styles), {
+      headers: { 'Content-Type': 'application/json' }
     });
 
   } catch (e) {
+    // 予期せぬエラーが発生した場合の処理
+    console.error("サーバー内部エラー:", e);
     return new Response(`サーバー内部で予期せぬエラーが発生しました: ${e.message}`, { status: 500 });
   }
 }
