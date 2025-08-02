@@ -1,23 +1,23 @@
 // functions/get-styles.js
 
+// Aivis APIの正しいスタイル一覧取得エンドポイント
+const AIVIS_STYLES_API_URL = "https://api.aivis-project.com/v1/styles";
+
 export async function onRequest(context) {
-  // このAPIはGETリクエストのみを受け付けます
   if (context.request.method !== "GET") {
     return new Response("GETメソッドを使用してください", { status: 405 });
   }
 
   try {
-    // 環境変数からAPIキーとモデルUUIDを取得
-    const { API_KEY, MODEL_UUID } = context.env;
+    // 環境変数からAPIキーのみ取得（MODEL_UUIDは不要）
+    const { API_KEY } = context.env;
 
-    if (!API_KEY || !MODEL_UUID) {
-      return new Response("サーバー側でAPIキーまたはモデルUUIDが設定されていません。", { status: 500 });
+    if (!API_KEY) {
+      return new Response("サーバー側でAPIキーが設定されていません。", { status: 500 });
     }
     
-    // Aivis APIのモデル詳細取得エンドポイントを呼び出す
-    const aivisModelApiUrl = `https://api.aivis-project.com/v1/models/${MODEL_UUID}`;
-
-    const aivisResponse = await fetch(aivisModelApiUrl, {
+    // Aivis APIのスタイル一覧取得エンドポイントを呼び出す
+    const aivisResponse = await fetch(AIVIS_STYLES_API_URL, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${API_KEY}`,
@@ -26,16 +26,13 @@ export async function onRequest(context) {
 
     if (!aivisResponse.ok) {
       const errorText = await aivisResponse.text();
-      return new Response(`Aivis APIからのモデル情報取得に失敗: ${errorText}`, { status: aivisResponse.status });
+      return new Response(`Aivis APIからのスタイル情報取得に失敗: ${errorText}`, { status: aivisResponse.status });
     }
 
-    const modelData = await aivisResponse.json();
+    const stylesData = await aivisResponse.json();
 
-    // モデル情報からスタイル配列を取得し、クライアントに返す
-    // modelData.styles が存在しない場合に備えて、空の配列をデフォルト値とする
-    const styles = modelData.styles || [];
-
-    return new Response(JSON.stringify(styles), {
+    // Aivis APIから返されたJSON配列をそのままクライアントに返す
+    return new Response(JSON.stringify(stylesData), {
       headers: { 'Content-Type': 'application/json' },
     });
 
