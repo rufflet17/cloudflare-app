@@ -10,7 +10,7 @@
  */
 async function synthesizeSingleText(text, speaker_uuid, apiKey, options) {
     const { style_name, style_strength } = options;
-    const aivisApiUrl = "https://api.aivis-project.com/v1/text2speech";
+    const aivisApiUrl = "https://api.aivis-project.com/v1/tts/synthesize";
 
     const requestPayload = {
         text: text,
