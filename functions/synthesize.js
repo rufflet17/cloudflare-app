@@ -1,24 +1,13 @@
 // functions/synthesize.js
 
-// ★★★★★ 設定はここを書き換えるだけ ★★★★★
-const AUDIO_CONFIG = {
-    format: 'wav',         // Aivis APIにリクエストするフォーマット名
-    contentType: 'audio/wav', // HTTPレスポンスやBlobで使うContent-Type
-    extension: 'wav'         // ダウンロード時のファイル拡張子
+const AUDIO_CONFIGS = {
+    mp3: { format: 'mp3', contentType: 'audio/mpeg' },
+    wav: { format: 'wav', contentType: 'audio/wav' },
+    flac: { format: 'flac', contentType: 'audio/flac' },
+    opus: { format: 'opus', contentType: 'audio/opus' },
 };
-// 例: MP3に変更する場合
-/*
-const AUDIO_CONFIG = {
-    format: 'mp3',
-    contentType: 'audio/mpeg',
-    extension: 'mp3'
-};
-*/
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★
+const SUPPORTED_FORMATS = Object.keys(AUDIO_CONFIGS);
 
-/**
- * ArrayBufferをBase64文字列に変換するヘルパー関数
- */
 function arrayBufferToBase64(buffer) {
     let binary = '';
     const bytes = new Uint8Array(buffer);
@@ -29,23 +18,25 @@ function arrayBufferToBase64(buffer) {
     return btoa(binary);
 }
 
-/**
- * Aivis APIに単一の音声合成リクエストを送信するヘルパー関数
- */
-async function synthesizeSingleText(text, modelUuid, apiKey, options) {
+async function synthesizeSingleText(text, modelUuid, apiKey, options, audioConfig) {
     const { style_id, style_strength } = options;
     
-    // 設定オブジェクトからAPIリクエストURLを動的に生成
-    const aivisApiUrl = `https://api.aivis-project.com/v1/tts/synthesize?format=${AUDIO_CONFIG.format}`;
+    // Aivis APIのエンドポイント
+    const aivisApiUrl = 'https://api.aivis-project.com/v1/tts/synthesize';
 
+    // APIに送信するペイロード
     const requestPayload = {
         text: text,
         model_uuid: modelUuid,
         style_id: Number(style_id),
-        style_strength: style_strength
+        // AIVIS APIの仕様に合わせてキーを 'output_format' に修正
+        output_format: audioConfig.format
+        // 注: style_strength はAPI仕様にないため、必要に応じて 'speaking_rate' などにマッピングしてください
+        // speaking_rate: style_strength
     };
     
     try {
+        // Aivis APIへのリクエスト
         const aivisResponse = await fetch(aivisApiUrl, {
             method: 'POST',
             headers: {
@@ -55,6 +46,7 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options) {
             body: JSON.stringify(requestPayload)
         });
 
+        // APIからのエラーレスポンスを処理
         if (!aivisResponse.ok) {
             const errorText = await aivisResponse.text();
             return {
@@ -64,17 +56,21 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options) {
             };
         }
 
+        // 実際にAPIが返した音声データのContent-Typeを取得
+        const actualContentType = aivisResponse.headers.get('Content-Type');
         const audioArrayBuffer = await aivisResponse.arrayBuffer();
         const audioBase64 = arrayBufferToBase64(audioArrayBuffer);
         
+        // 成功時のレスポンスを組み立てる
         return {
             status: 'success',
             text: text,
-            audio_base64: audioBase64,
-            content_type: AUDIO_CONFIG.contentType // 設定オブジェクトからContent-Typeを使用
+            audio_base_64: audioBase64,
+            content_type: actualContentType // 実際のContent-Typeを返す
         };
 
     } catch (e) {
+        // ネットワークエラーなどを処理
         return {
             status: 'error',
             text: text,
@@ -83,14 +79,13 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options) {
     }
 }
 
-/**
- * メインのリクエストハンドラー
- */
 async function handleRequest(context) {
     const { env } = context;
     const body = await context.request.json();
-    const { model_id, texts, style_id, style_strength } = body;
+    
+    const { model_id, texts, style_id, style_strength, format = 'mp3' } = body;
 
+    // 入力値のバリデーション
     if (!texts || !Array.isArray(texts) || texts.length === 0) {
         return new Response("リクエストボディに 'texts' (配列) が必要です。", { status: 400 });
     }
@@ -98,6 +93,12 @@ async function handleRequest(context) {
         return new Response("リクエストボディに 'model_id' が必要です。", { status: 400 });
     }
     
+    const audioConfig = AUDIO_CONFIGS[format];
+    if (!audioConfig) {
+        return new Response(`Unsupported format: ${format}. Supported formats are: ${SUPPORTED_FORMATS.join(', ')}`, { status: 400 });
+    }
+    
+    // 環境変数からUUIDとAPIキーを取得
     const targetModelUuid = env[`MODEL_UUID_${model_id}`];
     const apiKey = env.API_KEY;
 
@@ -110,19 +111,19 @@ async function handleRequest(context) {
     
     const options = { style_id, style_strength };
     
+    // 複数のテキストを並列で処理
     const results = await Promise.all(
-        texts.map(text => synthesizeSingleText(text, targetModelUuid, apiKey, options))
+        texts.map(text => synthesizeSingleText(text, targetModelUuid, apiKey, options, audioConfig))
     );
 
+    // 結果をJSON形式で返す
     return new Response(JSON.stringify(results), {
         headers: { 'Content-Type': 'application/json' }
     });
 }
 
-/**
- * Cloudflare Functionsのエントリポイント
- */
 export async function onRequest(context) {
+    // CORS プリフライトリクエストの処理
     if (context.request.method === 'OPTIONS') {
         return new Response(null, {
             headers: {
@@ -139,6 +140,7 @@ export async function onRequest(context) {
 
     try {
         const response = await handleRequest(context);
+        // CORSヘッダーを追加
         response.headers.set('Access-Control-Allow-Origin', '*');
         return response;
     } catch (e) {
