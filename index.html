@@ -124,10 +124,59 @@
             h1 { font-size: 1.5rem; }
             .player-card { flex-direction: column; align-items: stretch; }
             .card-actions-wrapper { flex-direction: row; justify-content: space-between; align-items: center; }
+            #auth-status-container { position: static; justify-content: center; margin: 1rem 1rem 0; width: auto; flex-wrap: wrap; }
         }
+        #auth-status-container {
+            position: fixed;
+            top: 15px;
+            right: 20px;
+            z-index: 1001;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 8px 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        #user-display-wrapper { display: flex; align-items: center; gap: 8px; }
+        #user-info { font-weight: bold; color: #333; font-size: 14px; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #auth-status-container button {
+            padding: 8px 16px; font-size: 14px; font-weight: bold; color: white;
+            border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.2s; margin: 0;
+        }
+        #login-btn { background-color: var(--primary-color); }
+        #login-btn:hover:not(:disabled) { background-color: var(--primary-hover-color); }
+        #logout-btn { background-color: var(--secondary-color); }
+        #logout-btn:hover { background-color: var(--secondary-hover-color); }
+        #edit-username-btn { width: 28px; height: 28px; font-size: 1rem; padding: 0; background-color: #e9ecef; color: #495057; border-radius: 50%; }
+        #edit-username-btn:hover { background-color: #dee2e6; }
+        .locked-feature { position: relative; pointer-events: none; }
+        .locked-feature::after {
+            content: 'ログインが必要です'; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(240, 240, 240, 0.7); color: #555; font-size: 1rem; font-weight: bold;
+            display: flex; justify-content: center; align-items: center; text-align: center;
+            border-radius: inherit; z-index: 10; cursor: not-allowed;
+        }
+        .tab-button.locked-feature::after { border-radius: 0; font-size: 0.8em; }
+        #r2-gallery-wrapper.locked-feature::after { border-radius: 8px; }
     </style>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
 </head>
 <body>
+    <!-- オーバーレイは削除 -->
+
+    <div id="auth-status-container">
+        <div id="user-display-wrapper" style="display: none;">
+            <span id="user-info" title=""></span>
+            <button id="edit-username-btn" title="表示名を変更">✏️</button>
+        </div>
+        <button id="login-btn">Googleでログイン</button>
+        <button id="logout-btn" style="display: none;">ログアウト</button>
+    </div>
+
     <div id="bg-fade-overlay"></div>
 
     <div class="container-wrapper">
@@ -177,23 +226,25 @@
             </div>
 
             <div id="tab-r2-gallery" class="tab-content">
-                <div class="button-group" style="margin-top: 0; margin-bottom: 1rem;">
-                    <button id="refresh-r2-gallery-btn">一覧を更新</button>
-                </div>
-                <div class="grid-container">
-                    <div class="setting-item" style="margin-bottom:0;">
-                        <label for="r2-search-model-select">モデル名で検索:</label>
-                        <select id="r2-search-model-select">
-                            <option value="">すべてのモデル</option>
-                        </select>
+                <div id="r2-gallery-wrapper">
+                    <div class="button-group" style="margin-top: 0; margin-bottom: 1rem;">
+                        <button id="refresh-r2-gallery-btn">一覧を更新</button>
                     </div>
-                    <div class="setting-item" style="margin-bottom:0;">
-                        <label for="r2-search-text-input">テキストで検索:</label>
-                        <input type="text" id="r2-search-text-input" placeholder="テキストキーワード...">
+                    <div class="grid-container">
+                        <div class="setting-item" style="margin-bottom:0;">
+                            <label for="r2-search-model-select">モデル名で検索:</label>
+                            <select id="r2-search-model-select">
+                                <option value="">すべてのモデル</option>
+                            </select>
+                        </div>
+                        <div class="setting-item" style="margin-bottom:0;">
+                            <label for="r2-search-text-input">テキストで検索:</label>
+                            <input type="text" id="r2-search-text-input" placeholder="テキストキーワード...">
+                        </div>
                     </div>
-                </div>
-                <div id="r2-gallery-container">
-                     <p>「一覧を更新」ボタンを押して、保存済みの音声を表示します。</p>
+                    <div id="r2-gallery-container">
+                         <p>「一覧を更新」ボタンを押して、保存済みの音声を表示します。</p>
+                    </div>
                 </div>
             </div>
             
@@ -211,7 +262,7 @@
         <button id="apply-bg-changes-btn" class="btn-reset" style="margin-top: 0; background-color: var(--success-color);">この設定を適用</button>
     </div>
 
-    <!-- ★変更点: script.jsを読み込む -->
+    <script src="auth.js"></script>
     <script src="script.js"></script>
 
 </body>
