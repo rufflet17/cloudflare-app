@@ -42,9 +42,8 @@ const r2SearchTextInput = document.getElementById('r2-search-text-input');
 // --- 状態管理 ---
 let appState = {}; let resultStates = {}; let originalModels = [];
 let currentCombinedAudioBlob = null;
-let currentPreviewAudioBlob = null;
-// currentCombinedAudioFilename と currentPreviewAudioFilename はダウンロード時のみに使われるため残します
 let currentCombinedAudioFilename = '';
+let currentPreviewAudioBlob = null;
 let currentPreviewAudioFilename = '';
 const defaultUiSettings = { width: 700, posX: (window.innerWidth - 700) / 2, posY: 32, opacity: 1.0 };
 let isAdjustMode = false; let tempBgSettings = { pixelX: 0, pixelY: 0, scale: 1.0 };
@@ -53,17 +52,16 @@ let dragStart = { mouseX: 0, mouseY: 0, pixelX: 0, pixelY: 0 };
 let panStart = { touchX: 0, touchY: 0, pixelX: 0, pixelY: 0 };
 let animationFrameId = null;
 const audioContextForDecoding = new (window.AudioContext || window.webkitAudioContext)();
-const escapeHtml = (unsafe) => unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 
 const loadState = () => { const savedState = localStorage.getItem(STORAGE_KEY); appState = savedState ? JSON.parse(savedState) : {}; appState.uiSettings = { ...defaultUiSettings, ...(appState.uiSettings || {}) }; };
 const saveState = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
-const getModelData = (modelId) => { if (!modelId) return { displayName: '不明' }; if (!appState[modelId]) { const modelName = originalModels.find(m => m.id === modelId)?.name || modelId; appState[modelId] = { displayName: modelName, images: [], activeImageId: null }; } return appState[modelId]; };
+const getModelData = (modelId) => { if (!appState[modelId]) { const modelName = originalModels.find(m => m.id === modelId)?.name || modelId; appState[modelId] = { displayName: modelName, images: [], activeImageId: null }; } return appState[modelId]; };
 const getActiveImage = (modelId) => modelId ? getModelData(modelId).images.find(img => img.id === getModelData(modelId).activeImageId) : null;
 const getCurrentModelId = () => modelSelectTTS.value;
 
 // --- UI更新関数 ---
-const setStatus = (message, isError = false) => { statusDiv.textContent = message; statusDiv.className = isError ? 'status status-error' : 'status-info'; };
-const updateSelectOptions = () => { [modelSelectTTS, modelSelectBG, r2SearchModelSelect].forEach(sel => { Array.from(sel.options).forEach(opt => { if (opt.value) opt.textContent = getModelData(opt.value).displayName; }); }); };
+const setStatus = (message, isError = false) => { statusDiv.textContent = message; statusDiv.className = isError ? 'status-error' : 'status-info'; };
+const updateSelectOptions = () => { [modelSelectTTS, modelSelectBG].forEach(sel => Array.from(sel.options).forEach(opt => { opt.textContent = getModelData(opt.value).displayName; })); };
 const applyUiSettings = () => { const { width, posX, posY, opacity } = appState.uiSettings; containerWrapper.style.maxWidth = `${width}px`; containerWrapper.style.left = `${posX}px`; containerWrapper.style.top = `${posY}px`; containerWrapper.style.opacity = opacity; uiWidthSlider.value = width; uiWidthInput.value = width; uiOpacitySlider.value = opacity; uiOpacityInput.value = opacity; };
 const applyBackground = (image) => { if (image && image.dataUrl) { bodyElement.style.backgroundImage = `url(${image.dataUrl})`; bodyElement.style.backgroundSize = `${100 * (image.scale || 1.0)}%`; bodyElement.style.backgroundPosition = `${image.pixelX || 0}px ${image.pixelY || 0}px`; } else { bodyElement.style.backgroundImage = 'none'; } };
 const renderGallery = (modelId) => { const modelData = getModelData(modelId); galleryContainer.innerHTML = ''; modelData.images.forEach(img => { const item = document.createElement('div'); item.className = 'gallery-item'; if (img.id === modelData.activeImageId) item.classList.add('active-bg'); item.dataset.imageId = img.id; item.innerHTML = `<button class="btn-delete-img" title="この画像を削除">×</button><img src="${img.dataUrl}" alt="thumbnail"><p class="gallery-item-name">${img.name}</p>`; galleryContainer.appendChild(item); }); };
@@ -83,18 +81,18 @@ function createSilence(durationSeconds, format, sampleRate = 44100, channels = 1
         const dataSize = numSamples * blockAlign;
         const buffer = new ArrayBuffer(44 + dataSize);
         const view = new DataView(buffer);
-        view.setUint32(0, 0x52494646, false);
+        view.setUint32(0, 0x52494646, false); // "RIFF"
         view.setUint32(4, 36 + dataSize, true);
-        view.setUint32(8, 0x57415645, false);
-        view.setUint32(12, 0x666d7420, false);
+        view.setUint32(8, 0x57415645, false); // "WAVE"
+        view.setUint32(12, 0x666d7420, false); // "fmt "
         view.setUint32(16, 16, true);
-        view.setUint16(20, 1, true);
+        view.setUint16(20, 1, true); // PCM
         view.setUint16(22, channels, true);
         view.setUint32(24, sampleRate, true);
         view.setUint32(28, sampleRate * blockAlign, true);
         view.setUint16(32, blockAlign, true);
         view.setUint16(34, bitDepth, true);
-        view.setUint32(36, 0x64617461, false);
+        view.setUint32(36, 0x64617461, false); // "data"
         view.setUint32(40, dataSize, true);
         const blob = new Blob([buffer], { type: 'audio/wav' });
         blob.isSilence = true;
@@ -113,6 +111,7 @@ function createSilence(durationSeconds, format, sampleRate = 44100, channels = 1
     }
     return null;
 }
+
 function findDataChunk(view) {
     let offset = 12;
     const byteLength = view.byteLength;
@@ -135,10 +134,12 @@ function findDataChunk(view) {
     console.error('Could not find "data" chunk in WAV file.');
     return null;
 }
+
 const mergeWavBlobs = async (blobs) => {
     const audioDataParts = [];
     let sampleRate, channels, bitDepth;
     let totalDataSize = 0;
+
     for (const blob of blobs) {
         if (blob.size < 44) {
             if(blob.size > 0) console.warn("Skipping a blob that is too small to be a valid WAV file.");
@@ -146,11 +147,13 @@ const mergeWavBlobs = async (blobs) => {
         }
         const buffer = await blob.arrayBuffer();
         const view = new DataView(buffer);
+
         if (!sampleRate) {
             sampleRate = view.getUint32(24, true);
             channels = view.getUint16(22, true);
             bitDepth = view.getUint16(34, true);
         }
+
         const dataChunk = findDataChunk(view);
         if (dataChunk && dataChunk.size > 0) {
             const audioData = new Uint8Array(buffer, dataChunk.offset, dataChunk.size);
@@ -158,28 +161,34 @@ const mergeWavBlobs = async (blobs) => {
             totalDataSize += dataChunk.size;
         }
     }
+
     if (totalDataSize === 0) return null;
+
     const bytesPerSample = bitDepth / 8;
     const blockAlign = channels * bytesPerSample;
     const byteRate = sampleRate * blockAlign;
+    
     const headerBuffer = new ArrayBuffer(44);
     const headerView = new DataView(headerBuffer);
-    headerView.setUint32(0, 0x52494646, false);
+
+    headerView.setUint32(0, 0x52494646, false); // "RIFF"
     headerView.setUint32(4, 36 + totalDataSize, true);
-    headerView.setUint32(8, 0x57415645, false);
-    headerView.setUint32(12, 0x666d7420, false);
+    headerView.setUint32(8, 0x57415645, false); // "WAVE"
+    headerView.setUint32(12, 0x666d7420, false); // "fmt "
     headerView.setUint32(16, 16, true);
-    headerView.setUint16(20, 1, true);
+    headerView.setUint16(20, 1, true); // PCM
     headerView.setUint16(22, channels, true);
     headerView.setUint32(24, sampleRate, true);
     headerView.setUint32(28, byteRate, true);
     headerView.setUint16(32, blockAlign, true);
     headerView.setUint16(34, bitDepth, true);
-    headerView.setUint32(36, 0x64617461, false);
+    headerView.setUint32(36, 0x64617461, false); // "data"
     headerView.setUint32(40, totalDataSize, true);
+
     const combinedBlobParts = [new Uint8Array(headerBuffer), ...audioDataParts];
     return new Blob(combinedBlobParts, { type: 'audio/wav' });
 };
+
 const combineAudioBlobs = async (blobs, intervals) => {
     if (!blobs || blobs.length === 0) return null;
     const combinedParts = [];
@@ -195,6 +204,7 @@ const combineAudioBlobs = async (blobs, intervals) => {
     if (format === 'wav') return await mergeWavBlobs(combinedParts);
     return new Blob(combinedParts, { type: FORMAT_MAPPING[format]?.contentType || blobs[0].type });
 };
+
 const mergeMp3Blobs = async (blobs) => {
     const processedBuffers = [];
     for (let i = 0; i < blobs.length; i++) {
@@ -225,7 +235,6 @@ const mergeMp3Blobs = async (blobs) => {
     return new Blob(processedBuffers, { type: 'audio/mpeg' });
 };
 
-// --- 音声生成とUIカード関連 ---
 const getFormatConfigByContentType = (contentType) => { if (!contentType) return { extension: 'bin', contentType: 'application/octet-stream' }; return Object.values(FORMAT_MAPPING).find(config => config.contentType === contentType.split(';')[0].trim()) || { extension: 'bin', contentType }; };
 const base64ToBlob = (base64, contentType) => { const byteCharacters = atob(base64); const byteArrays = []; for (let offset = 0; offset < byteCharacters.length; offset += 512) { const slice = byteCharacters.slice(offset, offset + 512); const byteNumbers = new Array(slice.length); for (let i = 0; i < slice.length; i++) byteNumbers[i] = slice.charCodeAt(i); byteArrays.push(new Uint8Array(byteNumbers)); } return new Blob(byteArrays, { type: contentType }); };
 async function processServerResponseAudio(base64Data, contentType) {
@@ -250,24 +259,22 @@ const createSafeFileName = (modelId, text, extension) => {
     return `${timestamp}_${cleanModelId}_${cleanText}.${extension}`;
 }
 const validateInput = (lines) => { const errors = []; if (lines.length > 10) errors.push(`最大10行までです。`); if (lines.some(line => line.length > 50)) errors.push(`1行あたり最大50文字までです。`); if (styleIdInput.value === '' || isNaN(parseInt(styleIdInput.value, 10))) errors.push('スタイルIDは数字で入力してください。'); if (errors.length > 0) { setStatus(errors.join(' / '), true); return false; } return true; };
+
 const processAudioRequest = async (linesToProcess) => {
     if (!validateInput(linesToProcess)) return null;
     generateBtn.disabled = true; generatePreviewBtn.disabled = true;
     setStatus(`${linesToProcess.length}件の音声を生成中...`);
     try {
         const requestFormat = formatSelect.value === 'wav' ? 'flac' : formatSelect.value;
-        const response = await fetch('/api/synthesize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model_id: getCurrentModelId(), texts: linesToProcess, style_id: styleIdInput.value, style_strength: parseFloat(styleStrengthInput.value), format: requestFormat }) });
-        if (!response.ok) {
-            const errorText = await response.text();
-            let errorMessage = `APIエラー (${response.status})`;
-            try { const errorJson = JSON.parse(errorText); errorMessage += `: ${errorJson.error || errorText}`; } catch (e) { errorMessage += `: ${errorText}`; }
-            throw new Error(errorMessage);
-        }
+        const response = await fetch('/synthesize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model_id: getCurrentModelId(), texts: linesToProcess, style_id: styleIdInput.value, style_strength: parseFloat(styleStrengthInput.value), format: requestFormat }) });
+        if (!response.ok) throw new Error(`APIエラー (${response.status}): ${await response.text()}`);
         return await response.json();
     } catch (error) { setStatus(error.message, true); return null; } finally { generateBtn.disabled = false; updateAllCardUIs(); }
 };
+
 const addHistoryEntry = (cardId, newEntry) => { const state = resultStates[cardId]; if (!state) return; state.history.splice(state.currentIndex + 1); state.history.push(newEntry); state.currentIndex = state.history.length - 1; };
 const updateCardUI = (cardId) => { const state = resultStates[cardId]; if (!state) return; const card = document.querySelector(`[data-card-id="${cardId}"]`); if (!card) return; const audio = card.querySelector('audio'); const downloadLink = card.querySelector('.download-link'); const undoBtn = card.querySelector('.btn-undo'); const redoBtn = card.querySelector('.btn-redo'); const errorMessageDiv = card.querySelector('.error-message'); const editableText = card.querySelector('.editable-text'); const hasAudio = state.history.length > 0 && state.currentIndex >= 0; const isTrueError = !!state.error; card.classList.toggle('is-error', isTrueError); audio.style.display = hasAudio ? 'block' : 'none'; downloadLink.style.display = hasAudio ? 'flex' : 'none'; undoBtn.style.display = hasAudio ? 'flex' : 'none'; redoBtn.style.display = hasAudio ? 'flex' : 'none'; errorMessageDiv.style.display = !hasAudio ? 'block' : 'none'; if (!hasAudio) { if (isTrueError) { errorMessageDiv.textContent = `エラー: ${state.error}`; errorMessageDiv.style.color = ''; } else { errorMessageDiv.textContent = 'テキストを入力し、再生成ボタン(↻)を押してください。'; errorMessageDiv.style.color = '#6c757d'; } editableText.textContent = state.initialText; } else { const currentHistoryEntry = state.history[state.currentIndex]; editableText.textContent = currentHistoryEntry.text; if (state.audioUrl) URL.revokeObjectURL(state.audioUrl); const url = URL.createObjectURL(currentHistoryEntry.blob); state.audioUrl = url; audio.src = url; downloadLink.href = url; const formatConfig = getFormatConfigByContentType(currentHistoryEntry.blob.type); downloadLink.download = createSafeFileName(getCurrentModelId(), currentHistoryEntry.text, formatConfig.extension); } undoBtn.disabled = !hasAudio || state.currentIndex <= 0; redoBtn.disabled = !hasAudio || state.currentIndex >= state.history.length - 1; };
+
 const addResultCard = async (result, insertAfterCard = null) => {
     const cardId = `card-${Date.now()}-${Math.random()}`;
     const card = document.createElement('div'); card.className = 'player-card'; card.dataset.cardId = cardId;
@@ -318,11 +325,8 @@ const updateAllCardUIs = () => {
     generatePreviewBtn.disabled = validAudioCount < 1;
 };
 
-// --- 設定のエクスポート/インポート ---
 const exportAllSettings = async () => { setStatus('設定をエクスポート中...'); try { const zip = new JSZip(); const stateToExport = JSON.parse(JSON.stringify(appState)); for (const modelId in stateToExport) { if (modelId === 'uiSettings' || !stateToExport[modelId].images) continue; for (const image of stateToExport[modelId].images) { if (image.dataUrl) { const match = image.dataUrl.match(/data:(image\/\w+);base64,(.*)/); if (match) { const mimeType = match[1]; const base64Data = match[2]; const extension = mimeType.split('/')[1] || 'png'; const imagePath = `images/${modelId}_${image.id}.${extension}`; zip.file(imagePath, base64Data, { base64: true }); image.dataUrl = imagePath; } } } } zip.file("settings.json", JSON.stringify(stateToExport, null, 2)); const blob = await zip.generateAsync({ type: "blob" }); const date = new Date().toISOString().slice(0, 10); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `tts-settings-backup-${date}.zip`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(a.href); setStatus('設定のエクスポートが完了しました。'); } catch (error) { console.error("エクスポートエラー:", error); setStatus(`エクスポートに失敗しました: ${error.message}`, true); } };
 const importZip = async (file) => { if (!confirm('現在の設定をすべて上書きしてインポートします。よろしいですか？')) return; setStatus('設定をインポート中...'); try { const zip = await JSZip.loadAsync(file); const settingsFile = zip.file("settings.json"); if (!settingsFile) throw new Error("ZIP内にsettings.jsonが見つかりません。"); const settingsJson = await settingsFile.async("string"); const importedState = JSON.parse(settingsJson); for (const modelId in importedState) { if (modelId === 'uiSettings' || !importedState[modelId].images) continue; for (const image of importedState[modelId].images) { if (typeof image.dataUrl === 'string' && image.dataUrl.startsWith('images/')) { const imageFile = zip.file(image.dataUrl); if (imageFile) { const base64Data = await imageFile.async("base64"); const mimeType = `image/${image.dataUrl.split('.').pop()}`; image.dataUrl = `data:${mimeType};base64,${base64Data}`; } } } } appState = importedState; saveState(); alert('インポートが完了しました。ページをリロードします。'); location.reload(); } catch (error) { console.error("インポートエラー:", error); setStatus(`インポートに失敗しました: ${error.message}`, true); } };
-
-// --- 背景調整関連 ---
 function renderLoop() { bodyElement.style.backgroundSize = `${100 * tempBgSettings.scale}%`; bodyElement.style.backgroundPosition = `${tempBgSettings.pixelX}px ${tempBgSettings.pixelY}px`; if (isAdjustMode) { animationFrameId = requestAnimationFrame(renderLoop); } }
 function onBgMouseDown(e) { isDraggingBg = true; dragStart = { mouseX: e.clientX, mouseY: e.clientY, pixelX: tempBgSettings.pixelX, pixelY: tempBgSettings.pixelY }; bodyElement.classList.add('grabbing'); }
 function onBgMouseUp() { isDraggingBg = false; bodyElement.classList.remove('grabbing'); }
@@ -336,6 +340,7 @@ const bgEventListeners = { mousedown: onBgMouseDown, mouseup: onBgMouseUp, mouse
 function startBgAdjustMode() { const activeImage = getActiveImage(getCurrentModelId()); if (!activeImage) { bgAdjustToggle.checked = false; return; } isAdjustMode = true; tempBgSettings.pixelX = activeImage.pixelX || 0; tempBgSettings.pixelY = activeImage.pixelY || 0; tempBgSettings.scale = activeImage.scale || 1.0; bodyElement.classList.add('bg-adjust-mode', 'no-transition'); setTimeout(() => bodyElement.classList.remove('no-transition'), 50); adjustModeControls.style.display = 'flex'; for (const [event, handler] of Object.entries(bgEventListeners)) { window.addEventListener(event, handler, { passive: false }); } animationFrameId = requestAnimationFrame(renderLoop); }
 function endBgAdjustMode({ revert = false } = {}) { cancelAnimationFrame(animationFrameId); isAdjustMode = false; bgAdjustToggle.checked = false; bodyElement.classList.remove('bg-adjust-mode'); adjustModeControls.style.display = 'none'; for (const [event, handler] of Object.entries(bgEventListeners)) { window.removeEventListener(event, handler); } if (revert) { applyBackground(getActiveImage(getCurrentModelId())); } }
 function performFadeSwitch(updateAction) { const oldStyle = window.getComputedStyle(bodyElement); bgFadeOverlay.style.transition = 'none'; bgFadeOverlay.style.backgroundImage = oldStyle.backgroundImage; bgFadeOverlay.style.backgroundSize = oldStyle.backgroundSize; bgFadeOverlay.style.backgroundPosition = oldStyle.backgroundPosition; bgFadeOverlay.style.opacity = '1'; bgFadeOverlay.style.zIndex = -1; requestAnimationFrame(() => { bodyElement.classList.add('no-transition'); updateAction(); requestAnimationFrame(() => { bodyElement.classList.remove('no-transition'); bgFadeOverlay.style.zIndex = 1; bgFadeOverlay.style.transition = 'opacity 0.5s ease-in-out'; bgFadeOverlay.style.opacity = '0'; }); }); }
+
 function audioBufferToWav(buffer) {
     const numOfChan = buffer.numberOfChannels;
     const length = buffer.length * numOfChan * 2 + 44; // 16bit PCM
@@ -345,24 +350,28 @@ function audioBufferToWav(buffer) {
     let i, sample;
     let offset = 0;
     let pos = 0;
+
     const setUint16 = (data) => { view.setUint16(pos, data, true); pos += 2; }
     const setUint32 = (data) => { view.setUint32(pos, data, true); pos += 4; }
-    setUint32(0x46464952);
+
+    setUint32(0x46464952); // "RIFF"
     setUint32(length - 8);
-    setUint32(0x45564157);
-    setUint32(0x20746d66);
+    setUint32(0x45564157); // "WAVE"
+    setUint32(0x20746d66); // "fmt "
     setUint32(16);
-    setUint16(1);
+    setUint16(1); // PCM
     setUint16(numOfChan);
     setUint32(buffer.sampleRate);
-    setUint32(buffer.sampleRate * 2 * numOfChan);
-    setUint16(numOfChan * 2);
-    setUint16(16);
-    setUint32(0x61746164);
+    setUint32(buffer.sampleRate * 2 * numOfChan); // byte rate
+    setUint16(numOfChan * 2); // block align
+    setUint16(16); // bits per sample
+    setUint32(0x61746164); // "data"
     setUint32(length - pos);
+
     for (i = 0; i < numOfChan; i++) {
         channels.push(buffer.getChannelData(i));
     }
+
     offset = pos;
     for (i = 0; i < buffer.length; i++) {
         for (let chan = 0; chan < numOfChan; chan++) {
@@ -375,144 +384,115 @@ function audioBufferToWav(buffer) {
     return new Blob([view], { type: "audio/wav" });
 }
 
-// ★★★ STEP 1: D1連携のため、`window.refreshR2Gallery`を新設 ★★★
-// auth.jsから呼び出せるようにグローバルスコープに配置
-window.refreshR2Gallery = async () => {
-    const user = window.auth.currentUser;
-    if (!user) {
-        r2GalleryContainer.innerHTML = '<p>この機能を利用するにはログインが必要です。</p>';
-        return;
-    }
-    
-    r2GalleryContainer.innerHTML = '<p>音声一覧を読み込み中...</p>';
-    refreshR2GalleryBtn.disabled = true;
-    refreshR2GalleryBtn.textContent = '更新中...';
+let allR2Files = [];
 
-    try {
-        const searchText = r2SearchTextInput.value;
-        const searchModel = r2SearchModelSelect.value;
-        
-        const url = new URL(`/api/audios/user/${user.uid}`, window.location.origin);
-        if (searchText) url.searchParams.set('text', searchText);
-        if (searchModel) url.searchParams.set('model', searchModel);
-
-        const response = await fetch(url);
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || '一覧の取得に失敗しました。');
-        }
-        
-        const files = await response.json();
-        renderR2GalleryUI(files);
-
-    } catch (error) {
-        console.error('Failed to refresh R2 gallery:', error);
-        r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`;
-    } finally {
-        refreshR2GalleryBtn.disabled = false;
-        refreshR2GalleryBtn.textContent = '一覧を更新';
-    }
-};
-
-// ★★★ STEP 2: D1連携のため、`renderR2Gallery`を`renderR2GalleryUI`にリネームし、ロジックを修正 ★★★
-// 元の `renderR2Gallery` は背景画像用なので、名前の衝突を避ける
-function renderR2GalleryUI(files) {
-    if (!files || files.length === 0) {
-        r2GalleryContainer.innerHTML = '<p>保存されている音声はありません。</p>';
-        return;
+function renderR2Gallery() {
+    if (allR2Files.length === 0) {
+         r2GalleryContainer.innerHTML = '<p>保存されている音声はありません。</p>';
+         return;
     }
 
-    r2GalleryContainer.innerHTML = '';
+    const selectedModelId = r2SearchModelSelect.value;
+    const searchText = r2SearchTextInput.value.toLowerCase();
 
-    // 検索用セレクトボックスの選択肢を、取得した音声のモデルで更新
-    const uniqueModelIdsInResponse = [...new Set(files.map(f => f.model_name))];
-    const currentSelectedModel = r2SearchModelSelect.value;
-    
-    r2SearchModelSelect.innerHTML = '<option value="">すべてのモデル</option>';
-    // `originalModels` を使って、IDと表示名をマッピングする
-    originalModels.forEach(model => {
-        // バックエンドから返されたモデルのみ選択肢に追加
-        if (uniqueModelIdsInResponse.includes(model.id)) {
-            const option = document.createElement('option');
-            option.value = model.id;
-            option.textContent = getModelData(model.id)?.displayName || model.name;
-            if(model.id === currentSelectedModel) option.selected = true;
-            r2SearchModelSelect.appendChild(option);
-        }
+    const filteredFiles = allR2Files.filter(file => {
+        const modelMatch = !selectedModelId || file.modelId === selectedModelId;
+        const textMatch = !searchText || file.text.toLowerCase().includes(searchText);
+        return modelMatch && textMatch;
     });
 
-    files.forEach(file => {
+    if (filteredFiles.length === 0) {
+        r2GalleryContainer.innerHTML = '<p>検索結果に一致する音声はありません。</p>';
+        return;
+    }
+    
+    r2GalleryContainer.innerHTML = '';
+
+    const isModelFiltered = !!selectedModelId;
+
+    filteredFiles.forEach(file => {
         const card = document.createElement('div');
         card.className = 'player-card';
-        const fileExtension = 'mp3'; // デフォルトの拡張子
-        const downloadName = `${file.id.substring(0,8)}.${fileExtension}`;
+        card.dataset.fileKey = file.key;
+        
+        const displayName = getModelData(file.modelId).displayName || file.modelId;
+        
+        const modelNameHTML = isModelFiltered 
+            ? ''
+            : `<p style="font-weight: bold; margin: 0; word-break: break-all;">${displayName}</p>`;
 
         card.innerHTML = `
             <div class="card-main">
-                <p style="word-break: break-all;"><b>テキスト:</b> ${escapeHtml(file.text_content)}</p>
-                <p style="font-size: 0.9em; color: #666;"><small><b>モデル:</b> ${escapeHtml(getModelData(file.model_name)?.displayName || file.model_name)} | <b>保存日時:</b> ${new Date(file.created_at).toLocaleString()}</small></p>
-                <audio controls preload="none" src="/api/get/${encodeURIComponent(file.r2_key)}"></audio>
-            </div>
-            <div class="card-actions-wrapper">
-                <div class="player-actions">
-                    <a href="/api/get/${encodeURIComponent(file.r2_key)}" download="${downloadName}" class="icon-btn download-link" title="ダウンロード">📥</a>
-                    <button class="icon-btn btn-delete-r2" data-record-id="${file.id}" title="削除">🗑️</button>
+                <div style="margin-bottom: 8px;">
+                    ${modelNameHTML}
+                    <p style="margin: 0; color: #333; word-break: break-all;">${file.text}</p>
                 </div>
+                <audio controls preload="none" src="/api/get/${encodeURIComponent(file.key)}"></audio>
+            </div>
+            <div class="player-actions">
+                 <a href="/api/get/${encodeURIComponent(file.key)}" download="${file.key}" class="icon-btn download-link" title="ダウンロード">📥</a>
+                 <button class="icon-btn btn-delete-r2" title="削除">🗑️</button>
             </div>
         `;
         r2GalleryContainer.appendChild(card);
     });
 }
 
-// ★★★ STEP 3: D1連携のため、`saveAudioToR2`ヘルパー関数を新設 ★★★
-async function saveAudioToR2(blob, textContent) {
-    const user = window.auth.currentUser;
-    if (!user) {
-        setStatus('保存するにはログインが必要です。', true);
-        return;
-    }
-    if (!blob) {
-        setStatus('保存対象の音声がありません。', true);
-        return;
-    }
-    
-    setStatus('R2に音声を保存中...');
-    const btnToDisable = blob === currentCombinedAudioBlob ? saveToR2Btn : savePreviewToR2Btn;
-    btnToDisable.disabled = true;
-
+async function loadR2Gallery() {
+    r2GalleryContainer.innerHTML = '<p>読み込み中...</p>';
     try {
-        const reader = new FileReader();
-        reader.readAsDataURL(blob);
-        reader.onloadend = async () => {
-            const base64Audio = reader.result.split(',')[1];
-            const payload = {
-                userId: user.uid,
-                modelName: getCurrentModelId(),
-                textContent: textContent.substring(0, 500),
-                audioBase64: base64Audio,
-                contentType: blob.type
-            };
-            const response = await fetch('/api/audios', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'サーバーエラー');
+        const response = await fetch('/api/list');
+        if (!response.ok) {
+            const errData = await response.text();
+            try {
+                const errJson = JSON.parse(errData);
+                 throw new Error(errJson.error || '一覧の取得に失敗しました。');
+            } catch (e) {
+                throw new Error(`一覧の取得に失敗しました。サーバーからの応答が不正です: ${errData.substring(0, 100)}`);
             }
-            setStatus('音声をR2に保存しました。');
-            const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
-            if (r2TabButton) r2TabButton.click();
-        };
+        }
+
+        const files = await response.json();
+        
+        allR2Files = files.map(file => {
+            const parts = file.key.split('_');
+            const extension = file.key.split('.').pop();
+            let modelId = "不明";
+            let text = "不明";
+
+            if (parts.length >= 3) {
+                modelId = parts[1];
+                text = parts.slice(2).join('_').replace(`.${extension}`, '');
+            }
+
+            return {
+                key: file.key,
+                size: file.size,
+                lastModified: new Date(file.lastModified),
+                modelId: modelId,
+                text: text
+            };
+        }).sort((a, b) => b.lastModified - a.lastModified);
+
+        r2SearchModelSelect.innerHTML = '<option value="">すべてのモデル</option>';
+        const uniqueModelIds = [...new Set(allR2Files.map(f => f.modelId))];
+        uniqueModelIds.forEach(id => {
+            const displayName = getModelData(id).displayName || id;
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = displayName;
+            r2SearchModelSelect.appendChild(option);
+        });
+
+        r2SearchTextInput.value = '';
+        renderR2Gallery();
+         
     } catch (error) {
-        console.error('R2 save error:', error);
-        setStatus(`保存エラー: ${error.message}`, true);
-    } finally {
-        btnToDisable.disabled = false;
+        console.error('R2 gallery load error:', error);
+        allR2Files = [];
+        r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`;
     }
 }
-
 
 // --- イベントリスナー ---
 const setupEventListeners = () => {
@@ -525,10 +505,7 @@ const setupEventListeners = () => {
         activeTab.classList.add('active'); 
         
         if (button.dataset.tab === 'r2-gallery') {
-            // ★★★ STEP 4: D1連携のため、`loadR2Gallery`を`window.refreshR2Gallery`に置き換え ★★★
-            if (window.auth.currentUser) {
-                window.refreshR2Gallery();
-            }
+            loadR2Gallery();
         }
 
         if (isAdjustMode) { endBgAdjustMode({ revert: true }); } 
@@ -789,49 +766,141 @@ const setupEventListeners = () => {
     addFirstCardBtn.addEventListener('click', () => addResultCard({ status: 'empty', text: '' }));
     exportAllSettingsBtn.addEventListener('click', exportAllSettings);
 
-    // ★★★ STEP 5: D1連携のため、元の保存処理を新しいヘルパー関数呼び出しに置き換え ★★★
-    saveToR2Btn.addEventListener('click', () => {
-        const successfulLines = textInput.value.split('\n').filter(line => line.trim() !== '');
-        saveAudioToR2(currentCombinedAudioBlob, successfulLines.join(' / '));
+    saveToR2Btn.addEventListener('click', async () => {
+        if (!currentCombinedAudioBlob || !currentCombinedAudioFilename) {
+            setStatus('保存対象の音声がありません。', true);
+            return;
+        }
+        setStatus('R2に音声を保存中...');
+        saveToR2Btn.disabled = true;
+        try {
+            const reader = new FileReader();
+            reader.readAsDataURL(currentCombinedAudioBlob);
+            reader.onloadend = async () => {
+                const base64Audio = reader.result.split(',')[1];
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fileName: currentCombinedAudioFilename,
+                        audioBase64: base64Audio,
+                        contentType: currentCombinedAudioBlob.type
+                    })
+                });
+                if (!response.ok) {
+                    const errorText = (await response.json()).error || response.statusText;
+                    throw new Error(`R2への保存に失敗: ${errorText}`);
+                }
+                const result = await response.json();
+                setStatus(`音声をR2に保存しました: ${result.key}`);
+                const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
+                if(r2TabButton) r2TabButton.click();
+            };
+        } catch (error) {
+            console.error('R2 save error:', error);
+            setStatus(error.message, true);
+        } finally {
+            saveToR2Btn.disabled = false;
+        }
     });
     
-    savePreviewToR2Btn.addEventListener('click', () => {
-        const validAudiosTexts = [];
-        resultsContainer.querySelectorAll('.player-card').forEach(card => {
-            const state = resultStates[card.dataset.cardId];
-            if (state && state.history.length > 0 && state.currentIndex >= 0) {
-                validAudiosTexts.push(state.history[state.currentIndex].text);
-            }
-        });
-        saveAudioToR2(currentPreviewAudioBlob, validAudiosTexts.join(' / '));
+    savePreviewToR2Btn.addEventListener('click', async () => {
+        if (!currentPreviewAudioBlob || !currentPreviewAudioFilename) {
+            setStatus('保存対象の結合音声がありません。', true);
+            return;
+        }
+        setStatus('結合音声をR2に保存中...');
+        savePreviewToR2Btn.disabled = true;
+        try {
+            const reader = new FileReader();
+            reader.readAsDataURL(currentPreviewAudioBlob);
+            reader.onloadend = async () => {
+                const base64Audio = reader.result.split(',')[1];
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fileName: currentPreviewAudioFilename,
+                        audioBase64: base64Audio,
+                        contentType: currentPreviewAudioBlob.type
+                    })
+                });
+                if (!response.ok) {
+                    const errorText = (await response.json()).error || response.statusText;
+                    throw new Error(`R2への保存に失敗: ${errorText}`);
+                }
+                const result = await response.json();
+                setStatus(`結合音声をR2に保存しました: ${result.key}`);
+                const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
+                if (r2TabButton) r2TabButton.click();
+            };
+        } catch (error) {
+            console.error('R2 save error:', error);
+            setStatus(error.message, true);
+        } finally {
+            savePreviewToR2Btn.disabled = false;
+        }
     });
 
     refreshR2GalleryBtn.addEventListener('click', () => {
-        if (refreshR2GalleryBtn.disabled) return;
-        window.refreshR2Gallery();
+        // ボタンがすでに無効なら何もしない
+        if (refreshR2GalleryBtn.disabled) {
+            return;
+        }
+
+        // すぐにボタンを無効化し、テキストを変更
+        refreshR2GalleryBtn.disabled = true;
+        refreshR2GalleryBtn.textContent = '更新中...';
+
+        // loadR2Gallery 関数を呼び出す
+        // then/catch/finally を使って、成功しても失敗してもボタンの状態を戻す
+        loadR2Gallery().finally(() => {
+            // 5秒間のクールダウンを設定
+            const cooldownSeconds = 5;
+            let secondsRemaining = cooldownSeconds;
+
+            // ボタンにカウントダウンを表示
+            refreshR2GalleryBtn.textContent = `更新（${secondsRemaining}秒後）`;
+            
+            const intervalId = setInterval(() => {
+                secondsRemaining--;
+                if (secondsRemaining > 0) {
+                    refreshR2GalleryBtn.textContent = `更新（${secondsRemaining}秒後）`;
+                } else {
+                    // カウントダウン終了
+                    clearInterval(intervalId);
+                    refreshR2GalleryBtn.disabled = false;
+                    refreshR2GalleryBtn.textContent = '一覧を更新';
+                }
+            }, 1000);
+        });
     });
     
-    r2SearchModelSelect.addEventListener('change', window.refreshR2Gallery);
-    r2SearchTextInput.addEventListener('input', window.refreshR2Gallery);
+    r2SearchModelSelect.addEventListener('change', renderR2Gallery);
+    r2SearchTextInput.addEventListener('input', renderR2Gallery);
 
     r2GalleryContainer.addEventListener('click', async (e) => {
         const deleteBtn = e.target.closest('.btn-delete-r2');
         if (!deleteBtn) return;
-        const recordId = deleteBtn.dataset.recordId;
-        if (confirm(`この音声を完全に削除しますか？この操作は取り消せません。`)) {
+        const card = deleteBtn.closest('.player-card');
+        const fileKey = card.dataset.fileKey;
+        if (confirm(`ファイル「${fileKey}」をR2から完全に削除しますか？この操作は元に戻せません。`)) {
             try {
                 deleteBtn.disabled = true;
-                deleteBtn.textContent = '...';
-                const response = await fetch(`/api/audios/${recordId}`, { method: 'DELETE' });
+                deleteBtn.innerHTML = '...';
+                const response = await fetch(`/api/delete/${encodeURIComponent(fileKey)}`, { method: 'DELETE' });
                 if (!response.ok) {
                     const errorText = (await response.json()).error || response.statusText;
                     throw new Error(`削除に失敗しました: ${errorText}`);
                 }
-                deleteBtn.closest('.player-card').remove();
+                card.remove();
+                allR2Files = allR2Files.filter(f => f.key !== fileKey);
+                renderR2Gallery();
+
             } catch(error) {
                 alert(error.message);
                 deleteBtn.disabled = false;
-                deleteBtn.textContent = '🗑️';
+                deleteBtn.innerHTML = '🗑️';
             }
         }
     });
@@ -846,46 +915,27 @@ const updateFormatSelectVisibility = () => {
         formatSelect.value = 'mp3';
     }
 }
-
-// ★★★ `init`関数を `get-models.js` を使うように修正 ★★★
-const init = () => {
-    loadState(); 
-    applyUiSettings(); 
-    updateFormatSelectVisibility();
-    
-    // get-models.jsからモデルリストを取得
-    if (typeof window.getModels === 'function') {
-        originalModels = window.getModels();
-    } else {
-        console.error("get-models.jsが読み込まれていないか、getModels関数が定義されていません。");
-        setStatus('モデル定義ファイルの読み込みに失敗しました。', true);
-        originalModels = [];
-    }
-
-    // 取得したモデルでUIを初期化
-    [modelSelectTTS, modelSelectBG, r2SearchModelSelect].forEach(sel => {
-        if (sel.id === 'r2-search-model-select') {
-            sel.innerHTML = '<option value="">すべてのモデル</option>';
-        } else {
-            sel.innerHTML = '';
-        }
-        originalModels.forEach(model => {
-            const option = document.createElement('option');
-            option.value = model.id;
-            option.textContent = model.name;
-            sel.appendChild(option);
-        });
-    });
-    
-    if (originalModels.length > 0) {
-        updateSelectOptions();
+const init = async () => {
+    loadState(); applyUiSettings(); updateFormatSelectVisibility();
+    try {
+        const response = await fetch('/get-models');
+        if (!response.ok) throw new Error('モデル取得に失敗しました。');
+        originalModels = await response.json();
+        [modelSelectTTS, modelSelectBG].forEach(sel => { sel.innerHTML = ''; originalModels.forEach(model => { const option = document.createElement('option'); option.value = model.id; option.textContent = model.name; sel.appendChild(option); }); });
+        if (originalModels.length > 0) { updateSelectOptions(); renderUIForSelectedModel(); } 
+        else { setStatus('利用可能なモデルがありません。', true); }
+    } catch (error) { 
+        console.warn(`モデル取得に失敗しました: ${error.message}。ダミーデータで初期化します。`);
+        setStatus('モデル取得に失敗。ダミーデータを使用します。');
+        originalModels = [
+             { id: 'dummy_model_1', name: 'ダミーモデルA' },
+             { id: 'dummy_model_2', name: 'ダミーモデルB' },
+        ];
+        [modelSelectTTS, modelSelectBG].forEach(sel => { sel.innerHTML = ''; originalModels.forEach(model => { const option = document.createElement('option'); option.value = model.id; option.textContent = model.name; sel.appendChild(option); }); });
+        updateSelectOptions(); 
         renderUIForSelectedModel();
-    } else {
-        setStatus('利用可能なモデルがありません。', true);
     }
-    
     setupEventListeners();
     updateAllCardUIs();
 };
-
 window.addEventListener('load', init);

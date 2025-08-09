@@ -1,4 +1,4 @@
-// auth.js (セキュリティパスのみを修正したバージョン)
+// auth.js
 
 (function() {
     'use strict';
@@ -19,8 +19,7 @@
     // =========================================================================
     // ★★★ ユーザー設定 2/2: 認証が必要なWorkerのエンドポイント（パス）を記述 ★★★
     // =========================================================================
-    // D1/R2を操作する新しいAPIパスを保護対象にする
-    const PROTECTED_API_PATHS = ['/api/audios'];
+    const PROTECTED_API_PATHS = ['/api/r2'];
 
 
     // --- これより下は通常、変更不要です ---
@@ -41,7 +40,7 @@
 
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
-        const url = args[0] instanceof Request ? args[0].url : String(args[0]);
+        const url = args[0];
         const options = args[1] || {};
         const isProtected = typeof url === 'string' && PROTECTED_API_PATHS.some(path => url.startsWith(path));
 
@@ -121,7 +120,6 @@
 
             r2GalleryTab.classList.add('locked-feature');
             r2GalleryWrapper.classList.add('locked-feature');
-            document.getElementById('r2-gallery-container').innerHTML = '<p>この機能を利用するにはログインが必要です。</p>';
             if (saveToR2Btn) saveToR2Btn.disabled = true;
             if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = true;
             
