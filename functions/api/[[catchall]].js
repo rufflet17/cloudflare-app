@@ -2,8 +2,7 @@
  * functions/api/[[catchall]].js
  * 
  * Cloudflare Pages Function for TTS App Backend
- * Handles API requests for uploading, listing, getting, and deleting audio files
- * using D1 for metadata and R2 for file storage.
+ * D1/R2の操作と、フロントエンドから指定されたモデルIDでの音声合成プロキシを担当します。
  */
 
 // Helper: エラーレスポンスを生成
@@ -34,13 +33,14 @@ export async function onRequest(context) {
   const R2_BUCKET = env.MY_R2_BUCKET;
   const D1_DB = env.MY_D1_DATABASE;
   if (!R2_BUCKET || !D1_DB) {
-    return errorResponse("R2 or D1 bindings are not configured. Please set them in your Pages project settings.", 500);
+    return errorResponse("R2 or D1 bindings are not configured.", 500);
   }
 
   try {
     const resource = pathSegments[0];
     const params = pathSegments.slice(1);
 
+    // --- D1/R2 関連のAPIエンドポイント ---
     if (request.method === 'POST' && resource === 'audios') {
         return await handleUpload(request, R2_BUCKET, D1_DB);
     }
@@ -57,15 +57,12 @@ export async function onRequest(context) {
         return await handleGet(getKey, R2_BUCKET);
     }
 
-    // 音声合成リクエストをCloudflare AIにプロキシする
+    // --- 音声合成のプロキシAPIエンドポイント ---
     if (request.method === 'POST' && resource === 'synthesize') {
         return await handleSynthesize(request, env);
     }
 
-    // モデル一覧を取得する
-    if (request.method === 'GET' && resource === 'get-models') {
-        return await handleGetModels(env);
-    }
+    // ★ get-models エンドポイントは削除されました
 
     return new Response('API endpoint not found', { status: 404 });
     
@@ -79,22 +76,19 @@ export async function onRequest(context) {
  * アップロード処理: POST /api/audios
  */
 async function handleUpload(request, R2_BUCKET, D1_DB) {
+  // ... (この関数は変更ありません) ...
   const { userId, modelName, textContent, audioBase64, contentType } = await request.json();
   if (!userId || !modelName || !audioBase64 || !contentType) {
     return errorResponse("Required fields are missing (userId, modelName, textContent, audioBase64, contentType).", 400);
   }
-
   const recordId = crypto.randomUUID();
   const r2Key = `${userId}/${crypto.randomUUID()}`;
   const createdAt = new Date().toISOString();
-  
   await D1_DB.prepare(
     'INSERT INTO audios (id, r2_key, user_id, model_name, text_content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
   ).bind(recordId, r2Key, userId, modelName, textContent, createdAt).run();
-  
   const body = base64ToArrayBuffer(audioBase64);
   await R2_BUCKET.put(r2Key, body, { httpMetadata: { contentType } });
-  
   return new Response(JSON.stringify({ success: true, id: recordId, r2Key: r2Key }), {
     status: 201, headers: { 'Content-Type': 'application/json' },
   });
@@ -104,17 +98,14 @@ async function handleUpload(request, R2_BUCKET, D1_DB) {
  * ユーザー基準の一覧取得処理: GET /api/audios/user/:userId
  */
 async function handleListByUser(userId, searchParams, D1_DB) {
+  // ... (この関数は変更ありません) ...
   const textQuery = searchParams.get('text') || '';
   const modelQuery = searchParams.get('model') || '';
-
   let query = 'SELECT id, r2_key, model_name, text_content, created_at FROM audios WHERE user_id = ?';
   const bindings = [userId];
-  
   if (textQuery) { query += ' AND text_content LIKE ?'; bindings.push(`%${textQuery}%`); }
   if (modelQuery) { query += ' AND model_name = ?'; bindings.push(modelQuery); }
-  
   query += ' ORDER BY created_at DESC LIMIT 100';
-
   const { results } = await D1_DB.prepare(query).bind(...bindings).all();
   return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' } });
 }
@@ -123,26 +114,28 @@ async function handleListByUser(userId, searchParams, D1_DB) {
  * 削除処理: DELETE /api/audios/:recordId
  */
 async function handleDelete(id, R2_BUCKET, D1_DB) {
-    if (!id) return errorResponse('Record ID is missing.', 400);
-    const record = await D1_DB.prepare('SELECT r2_key FROM audios WHERE id = ?').bind(id).first();
-    if (!record) return errorResponse('Record not found.', 404);
-    await R2_BUCKET.delete(record.r2_key);
-    await D1_DB.prepare('DELETE FROM audios WHERE id = ?').bind(id).run();
-    return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
+  // ... (この関数は変更ありません) ...
+  if (!id) return errorResponse('Record ID is missing.', 400);
+  const record = await D1_DB.prepare('SELECT r2_key FROM audios WHERE id = ?').bind(id).first();
+  if (!record) return errorResponse('Record not found.', 404);
+  await R2_BUCKET.delete(record.r2_key);
+  await D1_DB.prepare('DELETE FROM audios WHERE id = ?').bind(id).run();
+  return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
 }
 
 /**
  * ファイル取得処理: GET /api/get/:r2_key*
  */
 async function handleGet(key, R2_BUCKET) {
-    if (!key) return errorResponse('File key is missing.', 400);
-    const object = await R2_BUCKET.get(key);
-    if (object === null) return new Response('Object Not Found', { status: 404 });
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set('etag', object.httpEtag);
-    headers.set('Cache-Control', 'public, max-age=31536000, immutable');
-    return new Response(object.body, { headers });
+  // ... (この関数は変更ありません) ...
+  if (!key) return errorResponse('File key is missing.', 400);
+  const object = await R2_BUCKET.get(key);
+  if (object === null) return new Response('Object Not Found', { status: 404 });
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('etag', object.httpEtag);
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  return new Response(object.body, { headers });
 }
 
 /**
@@ -151,16 +144,25 @@ async function handleGet(key, R2_BUCKET) {
 async function handleSynthesize(request, env) {
     if (!env.AI) return errorResponse("AI binding not configured.", 500);
     const { model_id, texts, style_id, style_strength, format } = await request.json();
+
+    // ★★★ 修正箇所 ★★★
+    // フロントエンドから送られてきた`model_id`をそのままAIの実行に使うように修正。
+    // これにより、このバックエンドは特定のモデルに依存しなくなります。
+    if (!model_id) {
+        return errorResponse("`model_id` is required.", 400);
+    }
     
     const results = await Promise.all(texts.map(async text => {
         try {
-            const inputs = { text, voice: model_id };
-            if (style_id !== undefined && style_strength !== undefined) {
-                inputs.style_id = style_id;
-                inputs.style_strength = style_strength;
-            }
-            const response = await env.AI.run(`@cf/coqui/xtts-v2`, inputs);
-            const contentType = `audio/${format}`;
+            const inputs = { text }; // XTTSモデルの基本的な入力はテキストのみ
+            // ※ style_id, style_strength はXTTSモデルでは直接使用されませんが、
+            // 将来的にこれらをサポートするモデルのためにコードを残すことも可能です。
+            // if (style_id !== undefined) inputs.style_id = style_id;
+            
+            // `model_id` 変数を使って動的にモデルを実行
+            const response = await env.AI.run(model_id, inputs);
+
+            const contentType = `audio/${format || 'mp3'}`;
             return {
                 status: 'success',
                 text: text,
@@ -175,17 +177,7 @@ async function handleSynthesize(request, env) {
     return new Response(JSON.stringify(results), { headers: { "Content-Type": "application/json" } });
 }
 
-/**
- * モデル一覧取得: GET /api/get-models
- */
-async function handleGetModels(env) {
-    // ここではハードコードしていますが、将来的にはCloudflareのAPIから動的に取得することも考えられます
-    const models = [
-        { id: "@cf/coqui/xtts-v2", name: "Coqui XTTS v2 (多言語対応)" },
-        // 他の利用可能なモデルを追加
-    ];
-    return new Response(JSON.stringify(models), { headers: { "Content-Type": "application/json" } });
-}
+// ★★★ `handleGetModels` 関数は削除されました ★★★
 
 // btoaのpolyfill for non-browser environments like Workers
 function btoa(str) {
