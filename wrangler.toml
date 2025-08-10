@@ -1,19 +1,20 @@
-name = "cloudflare-app" # あなたのCloudflare Pagesプロジェクト名に置き換えてください
-compatibility_date = "2025-08-10" # YYYY-MM-DD形式の現在日付に近い日付
+# あなたのCloudflare Pagesプロジェクト名に置き換えてください
+name = "cloudflare-app"
 
-[pages_build_output]
-# functionsディレクトリを有効にするための設定
-functions = "functions"
+# YYYY-MM-DD形式の現在日付に近い日付
+compatibility_date = "2025-08-10" 
 
-[[rules]]
-# functionsディレクトリ内のコードをすべてのパスで実行
-type = "Functions"
-globs = ["/*"]
-
-[vars]
-# ここに環境変数を定義することもできますが、
-# ダッシュボードで設定している場合は不要です
+# [重要] Cloudflare Pages用の設定。
+# 静的アセットがルートディレクトリにあることを示す。
+pages_build_output_dir = "."
 
 [compatibility_flags]
-# これが今回のエラーを解決するための最も重要な設定です
+# Node.jsの標準モジュール（stream, cryptoなど）を有効にするための互換フラグ
 nodejs_compat = true
+
+# [[pages.functions]] セクションは、Pages Functionsの高度なルーティングや
+# プラグイン機能を使う際に必要ですが、`functions`ディレクトリを置くだけの
+# シンプルな構成では不要なため、ここでは記述を省略し、
+# Cloudflareの自動検出に任せるのが最もシンプルで確実です。
+# これにより、ビルドシステムが `functions` ディレクトリを自動で検出し、
+# 適切なルーティングを設定してくれます。
