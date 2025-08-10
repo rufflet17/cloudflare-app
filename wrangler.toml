@@ -2,7 +2,7 @@
 name = "cloudflare-app"
 
 # 安定した過去の日付を指定
-compatibility_date = "2025-08-10" 
+compatibility_date = "2025-07-10" 
 
 # Cloudflare Pages用の設定。静的アセットがルートディレクトリにあることを示す。
 pages_build_output_dir = "."
