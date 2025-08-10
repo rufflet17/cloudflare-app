@@ -5,7 +5,7 @@ name = "cloudflare-app"
 compatibility_date = "2025-07-10" 
 
 # Cloudflare Pages用の設定。静的アセットがルートディレクトリにあることを示す。
-pages_build_output_dir = "."
+pages_build_output_dir = "public"
 
 # [重要] 互換性フラグを文字列の配列形式で指定
 compatibility_flags = ["nodejs_compat"]
