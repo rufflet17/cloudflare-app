@@ -1,0 +1,15 @@
+{
+  "name": "cloudflare-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler pages deploy",
+    "build": "echo 'Build step not required for this project.'"
+  },
+  "dependencies": {
+    "firebase-admin": "^11.11.1"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
