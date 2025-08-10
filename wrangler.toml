@@ -19,10 +19,3 @@ bucket_name = "voice" # Cloudflareダッシュボードで作成したR2バケ�
 binding = "MY_D1_DATABASE" # コード内で env.MY_D1_DATABASE としてアクセスする名前
 database_name = "voice" # Cloudflareダッシュボードで作成したD1データベースの実際の名前
 database_id = "2ac0129a-3e2d-4376-ac79-f74fd74dd71c" # D1データベースのUUID
-
-
-[[services]]
-# The binding name used in your code to call the service.
-binding = "GOOGLE_APIS"
-# The name of the service to bind to.
-service = "www.googleapis.com"

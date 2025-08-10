@@ -1,68 +1,13 @@
-import { jwtVerify, createRemoteJWKSet } from 'jose';
+// btoaはNode.js環境ではデフォルトで利用できないため、Cloudflare Workersのグローバルスコープで利用可能なことを前提としています。
 
-/**
- * リクエストヘッダーからFirebase IDトークンを検証する
- * @param {Request} request - Cloudflareからのリクエストオブジェクト
- * @param {object} env - 環境変数とサービスバインディングを含むオブジェクト
- * @returns {Promise<{user?: object, error?: Response}>} - 成功時はuser、失敗時はerrorレスポンス
- */
-async function verifyAuth(request, env) {
-  // サービスバインディングが設定されているか確認
-  if (!env.GOOGLE_APIS) {
-    console.error("FATAL: GOOGLE_APIS service binding is not configured in wrangler.toml.");
-    return { error: new Response(JSON.stringify({error: 'Server configuration error'}), { status: 500, headers: {'Content-Type': 'application/json'} }) };
-  }
-
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return { error: new Response(JSON.stringify({error: 'Missing or invalid Authorization header'}), { status: 401, headers: {'Content-Type': 'application/json'} }) };
-  }
-
-  const token = authHeader.substring(7); // "Bearer " の部分を削除
-  const projectId = env.FIREBASE_PROJECT_ID;
-
-  if (!projectId) {
-      console.error("FATAL: FIREBASE_PROJECT_ID environment variable not set.");
-      return { error: new Response(JSON.stringify({error: 'Server configuration error'}), { status: 500, headers: {'Content-Type': 'application/json'} }) };
-  }
-
-  try {
-    // サービスバインディング経由でGoogleの公開鍵を取得するためのJWKSオブジェクトを生成
-    const jwksUrl = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
-    const JWKS = createRemoteJWKSet(new URL(jwksUrl), {
-        // joseライブラリが内部で使うfetchを、Cloudflareのサービスバインディングに差し替える
-        fetch: (url, options) => env.GOOGLE_APIS.fetch(url, options)
-    });
-
-    // トークンを検証
-    const { payload } = await jwtVerify(token, JWKS, {
-      issuer: `https://securetoken.google.com/${projectId}`,
-      audience: projectId,
-    });
-    
-    // 検証成功！ペイロードからユーザー情報を返す (subがFirebaseのuidにあたる)
-    return { user: { uid: payload.sub, email: payload.email } };
-  } catch (err) {
-    console.error('Token verification failed:', err.name, err.message, err.code);
-    let status = 403; // Forbidden
-    let message = 'Invalid or expired token.';
-    if (err.code === 'ERR_JWT_EXPIRED') {
-        status = 401; // Unauthorized
-        message = 'Token has expired.';
-    } else if (err.message.includes('malformed') || err.name === 'JOSEError') {
-        message = 'Failed to fetch or validate authentication keys. Service binding might be misconfigured.';
-    }
-    return { error: new Response(JSON.stringify({error: message}), { status, headers: {'Content-Type': 'application/json'} }) };
-  }
-}
-
-// --- APIハンドラー (ここから下は変更なし) ---
+// --- APIハンドラー ---
 export async function onRequest(context) {
-  const { request } = context;
+  const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
 
+  // ルーティング
   if (path === "/get-models" && method === "GET") {
     return handleGetModels(context);
   }
@@ -73,37 +18,8 @@ export async function onRequest(context) {
     return handleApiRoutes(context);
   }
 
+  // ★修正点1: マッチしない場合は次の処理（静的アセットの配信など）へ
   return context.next();
-}
-
-// --- /api/* ルートの処理（認証を組み込む） ---
-async function handleApiRoutes(context) {
-    const { request, env } = context;
-    const url = new URL(request.url);
-    const method = request.method;
-
-    const authResult = await verifyAuth(request, env);
-    if (authResult.error) {
-        return authResult.error;
-    }
-    const user = authResult.user;
-
-    if (url.pathname === '/api/upload' && method === 'POST') {
-        return handleUpload(request, env, user);
-    }
-    if (url.pathname === '/api/list' && method === 'GET') {
-        return handleList(request, env, user);
-    }
-    if (url.pathname.startsWith('/api/get/') && method === 'GET') {
-        const key = decodeURIComponent(url.pathname.substring('/api/get/'.length));
-        return handleGet(request, env, user, key);
-    }
-    if (url.pathname.startsWith('/api/delete/') && method === 'DELETE') {
-        const key = decodeURIComponent(url.pathname.substring('/api/delete/'.length));
-        return handleDelete(request, env, user, key);
-    }
-
-    return new Response("API Route Not Found", { status: 404 });
 }
 
 // --- /get-models ハンドラー ---
@@ -125,7 +41,7 @@ async function handleGetModels({ env }) {
     const data = await response.json();
     const models = data.result.map(model => ({
         id: model.name,
-        name: model.name.split('/').pop()
+        name: model.name.split('/').pop() // モデル名からプレフィックスを除去
     }));
     return new Response(JSON.stringify(models), {
       headers: { "Content-Type": "application/json" },
@@ -148,6 +64,7 @@ async function handleSynthesize({ request, env }) {
         return new Response(JSON.stringify({ error: "Missing required parameters: model_id, texts (array)." }), { status: 400 });
     }
     
+    // Cloudflare AI Gateway/Workers AIは現在一度に一つのテキストしか処理できないため、ループ処理
     const results = [];
     for (const text of texts) {
         try {
@@ -159,8 +76,10 @@ async function handleSynthesize({ request, env }) {
 
             const response = await env.AI.run(model_id, inputs);
 
+            // Base64エンコード
             const arrayBuffer = await new Response(response).arrayBuffer();
             const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+            
             const contentType = `audio/${format}`;
 
             results.push({
@@ -192,14 +111,45 @@ async function handleSynthesize({ request, env }) {
   }
 }
 
+
+// --- /api/* ルートの処理 ---
+async function handleApiRoutes(context) {
+    const { request, env } = context;
+    const url = new URL(request.url);
+    const method = request.method;
+
+    // --- 認証を削除し、ダミーユーザー情報を設定 ---
+    // セキュリティを考慮しないため、すべてのリクエストを同じ固定ユーザーとして扱う
+    const user = { uid: "shared-user" };
+
+    // --- ルーティング ---
+    if (url.pathname === '/api/upload' && method === 'POST') {
+        return handleUpload(request, env, user);
+    }
+    if (url.pathname === '/api/list' && method === 'GET') {
+        return handleList(request, env, user);
+    }
+    if (url.pathname.startsWith('/api/get/') && method === 'GET') {
+        const key = url.pathname.substring('/api/get/'.length);
+        return handleGet(request, env, user, key);
+    }
+    if (url.pathname.startsWith('/api/delete/') && method === 'DELETE') {
+        const key = url.pathname.substring('/api/delete/'.length);
+        return handleDelete(request, env, user, key);
+    }
+
+    return new Response("API Route Not Found", { status: 404 });
+}
+
 // --- /api/upload ハンドラー ---
 async function handleUpload(request, env, user) {
     try {
         const { modelId, text, audioBase64, contentType } = await request.json();
         if (!modelId || !text || !audioBase64 || !contentType) {
-            return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400, headers: {'Content-Type': 'application/json'} });
+            return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
         }
         
+        // Base64デコード
         const audioData = atob(audioBase64);
         const arrayBuffer = new Uint8Array(audioData.length);
         for (let i = 0; i < audioData.length; i++) {
@@ -209,10 +159,12 @@ async function handleUpload(request, env, user) {
         const extension = contentType.split('/')[1] || 'bin';
         const r2Key = `${user.uid}/${crypto.randomUUID()}.${extension}`;
         
+        // ★修正点2: env.MY_BUCKET -> env.MY_R2_BUCKET
         await env.MY_R2_BUCKET.put(r2Key, arrayBuffer, {
             httpMetadata: { contentType },
         });
 
+        // D1にメタデータを保存
         const d1Key = crypto.randomUUID();
         const createdAt = new Date().toISOString();
         
@@ -221,15 +173,16 @@ async function handleUpload(request, env, user) {
         ).bind(d1Key, r2Key, user.uid, modelId, text, createdAt).run();
 
         if (!success) {
+            // ★修正点2: env.MY_BUCKET -> env.MY_R2_BUCKET
             await env.MY_R2_BUCKET.delete(r2Key);
             throw new Error("Failed to write metadata to D1.");
         }
 
-        return new Response(JSON.stringify({ success: true, key: r2Key }), { status: 200, headers: {'Content-Type': 'application/json'} });
+        return new Response(JSON.stringify({ success: true, key: r2Key }), { status: 200 });
 
     } catch (error) {
         console.error("Upload failed:", error);
-        return new Response(JSON.stringify({ error: "Upload failed." }), { status: 500, headers: {'Content-Type': 'application/json'} });
+        return new Response(JSON.stringify({ error: "Upload failed." }), { status: 500 });
     }
 }
 
@@ -246,21 +199,25 @@ async function handleList(request, env, user) {
 
     } catch (error) {
         console.error("List failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to list audio files." }), { status: 500, headers: {'Content-Type': 'application/json'} });
+        return new Response(JSON.stringify({ error: "Failed to list audio files." }), { status: 500 });
     }
 }
 
 // --- /api/get/[key] ハンドラー ---
 async function handleGet(request, env, user, key) {
     try {
+        const decodedKey = decodeURIComponent(key);
+        
+        // D1でキーの存在と所有権を確認
         const stmt = env.MY_D1_DATABASE.prepare("SELECT id FROM audios WHERE r2_key = ? AND user_id = ?");
-        const { results } = await stmt.bind(key, user.uid).all();
+        const { results } = await stmt.bind(decodedKey, user.uid).all();
 
         if (!results || results.length === 0) {
             return new Response("File not found or access denied.", { status: 404 });
         }
         
-        const object = await env.MY_R2_BUCKET.get(key);
+        // ★修正点2: env.MY_BUCKET -> env.MY_R2_BUCKET
+        const object = await env.MY_R2_BUCKET.get(decodedKey);
 
         if (object === null) {
             return new Response("Object Not Found in R2", { status: 404 });
@@ -274,26 +231,31 @@ async function handleGet(request, env, user, key) {
 
     } catch (error) {
         console.error("Get failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to get audio file." }), { status: 500, headers: {'Content-Type': 'application/json'} });
+        return new Response(JSON.stringify({ error: "Failed to get audio file." }), { status: 500 });
     }
 }
 
 // --- /api/delete/[key] ハンドラー ---
 async function handleDelete(request, env, user, key) {
     try {
+        const decodedKey = decodeURIComponent(key);
+
+        // D1でキーの存在と所有権を確認してから削除
         const stmt = env.MY_D1_DATABASE.prepare("DELETE FROM audios WHERE r2_key = ? AND user_id = ? RETURNING id");
-        const { results } = await stmt.bind(key, user.uid).all();
+        const { results } = await stmt.bind(decodedKey, user.uid).all();
 
         if (!results || results.length === 0) {
-            return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404, headers: {'Content-Type': 'application/json'} });
+            // 削除対象が見つからない、または所有権がない
+            return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404 });
         }
         
-        await env.MY_R2_BUCKET.delete(key);
+        // ★修正点2: env.MY_BUCKET -> env.MY_R2_BUCKET
+        await env.MY_R2_BUCKET.delete(decodedKey);
 
-        return new Response(JSON.stringify({ success: true, key: key }), { status: 200, headers: {'Content-Type': 'application/json'} });
+        return new Response(JSON.stringify({ success: true, key: decodedKey }), { status: 200 });
 
     } catch (error) {
         console.error("Delete failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to delete audio file." }), { status: 500, headers: {'Content-Type': 'application/json'} });
+        return new Response(JSON.stringify({ error: "Failed to delete audio file." }), { status: 500 });
     }
 }
