@@ -411,11 +411,9 @@ async function processServerResponseAudio(base64Data, contentType) {
     return rawBlob;
 }
 const createSafeFileName = (modelId, text, extension) => {
-    const date = new Date();
-    const timestamp = `${date.getFullYear()}${(date.getMonth() + 1).toString().padStart(2, '0')}${date.getDate().toString().padStart(2, '0')}-${date.getHours().toString().padStart(2, '0')}${date.getMinutes().toString().padStart(2, '0')}${date.getSeconds().toString().padStart(2, '0')}`;
     const cleanModelId = (modelId || 'UnknownModelId').replace(/[\\/:*?"<>|]/g, '_').trim();
     const cleanText = (text || 'NoText').substring(0, 30).replace(/[\\/:*?"<>|]/g, '_').trim();
-    return `${timestamp}_${cleanModelId}_${cleanText}.${extension}`;
+    return `${cleanModelId}_${cleanText}.${extension}`;
 }
 const validateInput = (lines) => { const errors = []; if (lines.length > 10) errors.push(`最大10行までです。`); if (lines.some(line => line.length > 50)) errors.push(`1行あたり最大50文字までです。`); if (styleIdInput.value === '' || isNaN(parseInt(styleIdInput.value, 10))) errors.push('スタイルIDは数字で入力してください。'); if (errors.length > 0) { setStatus(errors.join(' / '), true); return false; } return true; };
 
