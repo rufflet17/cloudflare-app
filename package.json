@@ -5,7 +5,7 @@
   "description": "A static website with Cloudflare Functions for the backend API.",
   "main": "index.js",
   "scripts": {
-
+    "deploy": "wrangler pages deploy --project-name=<あなたのプロジェクト名>"
   },
   "keywords": [
     "cloudflare",
@@ -16,5 +16,6 @@
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
+    "firebase-admin": "^12.0.0"
   }
 }
