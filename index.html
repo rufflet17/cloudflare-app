@@ -261,8 +261,166 @@
         <button id="apply-bg-changes-btn" class="btn-reset" style="margin-top: 0; background-color: var(--success-color);">この設定を適用</button>
     </div>
 
-    <script src="auth.js"></script>
     <script>
+        // =========================================================================
+        // --- 認証スクリプト (auth.js) ---
+        // =========================================================================
+        (function() {
+            'use strict';
+
+            const firebaseConfig = {
+                apiKey: "AIzaSyCfnWPi16Tt8PQGzb6Qo2ql3yFf2GSGaN8",
+                authDomain: "voice-1e03c.firebaseapp.com",
+                projectId: "voice-1e03c",
+                storageBucket: "voice-1e03c.firebasestorage.app",
+                messagingSenderId: "1067746798695",
+                appId: "1:1067746798695:web:76bc39f08b51fc512c38c2",
+                measurementId: "G-W5TEENZEJ0"
+            };
+
+            // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+            // ★ 修正点: 保護対象のパスを '/api/' に変更 ★
+            // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+            const PROTECTED_API_PATHS = ['/api/'];
+
+            firebase.initializeApp(firebaseConfig);
+            const auth = firebase.auth();
+            let currentUser = null;
+
+            async function getIdToken() {
+                if (!auth.currentUser) return null;
+                try {
+                    return await auth.currentUser.getIdToken(true);
+                } catch (error) {
+                    console.error("IDトークンの取得に失敗:", error);
+                    return null;
+                }
+            }
+
+            const originalFetch = window.fetch;
+            window.fetch = async function(...args) {
+                const url = args[0];
+                const options = args[1] || {};
+                const isProtected = typeof url === 'string' && PROTECTED_API_PATHS.some(path => url.startsWith(path));
+
+                if (isProtected) {
+                    if (!currentUser) {
+                        console.warn('保護されたAPIへのリクエストがブロックされました: 未ログイン');
+                        // 失敗したPromiseを返すことで、呼び出し元のcatchブロックでエラーをハンドリングできるようにする
+                        return Promise.reject(new Response(JSON.stringify({ error: 'Authentication required.' }),{ status: 401, statusText: 'Unauthorized' }));
+                    }
+                    const token = await getIdToken();
+                    if (!token) {
+                         console.error('保護されたAPIへのリクエストがブロックされました: トークン取得失敗');
+                        return Promise.reject(new Response(JSON.stringify({ error: 'Failed to retrieve auth token.' }), { status: 401, statusText: 'Unauthorized' }));
+                    }
+                    options.headers = { ...options.headers, 'Authorization': `Bearer ${token}` };
+                    args[1] = options;
+                }
+                return originalFetch.apply(this, args);
+            };
+
+            async function handleEditUsername() {
+                if (!currentUser) return;
+
+                const currentName = currentUser.displayName || '';
+                const newName = prompt("新しい表示名を入力してください（20文字以内）:", currentName);
+
+                if (newName === null) { return; }
+                const trimmedName = newName.trim();
+                if (trimmedName === "") { alert("表示名は空にできません。"); return; }
+                if (trimmedName.length > 20) { alert("表示名は20文字以内で入力してください。"); return; }
+
+                try {
+                    await currentUser.updateProfile({ displayName: trimmedName });
+                    document.getElementById('user-info').textContent = trimmedName;
+                    document.getElementById('user-info').title = trimmedName;
+                    alert("表示名を更新しました。");
+                } catch (error) {
+                    console.error("表示名の更新に失敗しました:", error);
+                    alert("エラーが発生しました。表示名を更新できませんでした。");
+                }
+            }
+
+            function updateUIForAuthState(user) {
+                const loginBtn = document.getElementById('login-btn');
+                const logoutBtn = document.getElementById('logout-btn');
+                const userDisplayWrapper = document.getElementById('user-display-wrapper');
+                const userInfo = document.getElementById('user-info');
+                const editUsernameBtn = document.getElementById('edit-username-btn');
+
+                const r2GalleryTab = document.querySelector('.tab-button[data-tab="r2-gallery"]');
+                const r2GalleryWrapper = document.getElementById('r2-gallery-wrapper');
+                const saveToR2Btn = document.getElementById('save-to-r2-btn');
+                const savePreviewToR2Btn = document.getElementById('save-preview-to-r2-btn');
+
+                currentUser = user;
+
+                if (user) {
+                    loginBtn.style.display = 'none';
+                    logoutBtn.style.display = 'block';
+                    userDisplayWrapper.style.display = 'flex';
+                    
+                    const displayName = user.displayName || user.email;
+                    userInfo.textContent = displayName;
+                    userInfo.title = displayName;
+                    editUsernameBtn.onclick = handleEditUsername;
+
+                    r2GalleryTab.classList.remove('locked-feature');
+                    r2GalleryWrapper.classList.remove('locked-feature');
+                    if (saveToR2Btn) saveToR2Btn.disabled = false;
+                    if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = false;
+                    
+                    // ログイン時にギャラリーのタブがアクティブでなければ、更新を試みる
+                    if (typeof loadR2Gallery === 'function') {
+                        // ログイン直後に一度だけ更新をかける
+                        if (!r2GalleryTab.classList.contains('active')) {
+                           setTimeout(() => loadR2Gallery(), 500);
+                        }
+                    }
+
+                } else {
+                    loginBtn.style.display = 'block';
+                    logoutBtn.style.display = 'none';
+                    userDisplayWrapper.style.display = 'none';
+
+                    r2GalleryTab.classList.add('locked-feature');
+                    r2GalleryWrapper.classList.add('locked-feature');
+                    if (saveToR2Btn) saveToR2Btn.disabled = true;
+                    if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = true;
+                    
+                    if (r2GalleryTab.classList.contains('active')) {
+                        document.querySelector('.tab-button[data-tab="tts"]').click();
+                    }
+                }
+            }
+            
+            // ログインボタンの処理
+            document.getElementById('login-btn').addEventListener('click', () => {
+                const provider = new firebase.auth.GoogleAuthProvider();
+                
+                auth.signInWithPopup(provider).catch(error => {
+                    if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+                        console.log(`ログインがキャンセルされました: ${error.code}`);
+                    } else {
+                        console.error("Googleログインエラー:", error);
+                        alert(`ログインに失敗しました: ${error.message}`);
+                    }
+                });
+            });
+
+            document.getElementById('logout-btn').addEventListener('click', () => {
+                auth.signOut();
+            });
+
+            auth.onAuthStateChanged(updateUIForAuthState);
+            
+        })();
+
+
+        // =========================================================================
+        // --- メインアプリケーションスクリプト (元script.js) ---
+        // =========================================================================
         const SHOW_ADVANCED_FORMATS = true; 
         
         // --- 基本設定 & DOM要素取得 ---
@@ -709,7 +867,8 @@
         async function loadR2Gallery() {
             r2GalleryContainer.innerHTML = '<p>読み込み中...</p>';
             try {
-                const response = await fetchWithAuth('/api/list');
+                // fetchWithAuthは不要。auth.jsが自動でfetchを処理する
+                const response = await fetch('/api/list');
                 if (!response.ok) {
                     const errData = await response.text();
                     try {
@@ -720,7 +879,6 @@
                     }
                 }
 
-                // APIからのレスポンスは { r2_key, model_name, text_content, created_at } の配列を想定
                 const filesFromD1 = await response.json();
                 
                 allR2Files = filesFromD1.map(file => {
@@ -1042,30 +1200,36 @@
                     const reader = new FileReader();
                     reader.readAsDataURL(blob);
                     reader.onloadend = async () => {
-                        const base64Audio = reader.result.split(',')[1];
-                        const response = await fetch('/api/upload', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                modelId: modelId,
-                                text: text,
-                                audioBase64: base64Audio,
-                                contentType: blob.type
-                            })
-                        });
-                        if (!response.ok) {
-                            const errorText = (await response.json()).error || response.statusText;
-                            throw new Error(`R2への保存に失敗: ${errorText}`);
+                        try {
+                            const base64Audio = reader.result.split(',')[1];
+                            const response = await fetch('/api/upload', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    modelId: modelId,
+                                    text: text,
+                                    audioBase64: base64Audio,
+                                    contentType: blob.type
+                                })
+                            });
+                            if (!response.ok) {
+                                const errorData = await response.json().catch(() => ({ error: response.statusText }));
+                                throw new Error(`R2への保存に失敗: ${errorData.error}`);
+                            }
+                            const result = await response.json();
+                            setStatus(`音声をR2に保存しました (Key: ${result.key})`);
+                            const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
+                            if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) r2TabButton.click();
+                        } catch (err) {
+                            console.error('R2 save error:', err);
+                            setStatus(err.message, true);
+                        } finally {
+                             button.disabled = false;
                         }
-                        const result = await response.json();
-                        setStatus(`音声をR2に保存しました (Key: ${result.key})`);
-                        const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
-                        if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) r2TabButton.click();
                     };
                 } catch (error) {
-                    console.error('R2 save error:', error);
-                    setStatus(error.message, true);
-                } finally {
+                    console.error('File reading error:', error);
+                    setStatus('ファイルの読み込みに失敗しました。', true);
                     button.disabled = false;
                 }
             }
@@ -1118,7 +1282,7 @@
                         }
                         card.remove();
                         allR2Files = allR2Files.filter(f => f.key !== fileKey);
-                        renderR2Gallery(); // Re-render to update the view
+                        renderR2Gallery(); 
                         if (allR2Files.length === 0) {
                             r2GalleryContainer.innerHTML = '<p>保存されている音声はありません。</p>';
                         }
@@ -1141,31 +1305,35 @@
                 formatSelect.value = 'mp3';
             }
         }
-        const init = async () => {
-            loadState(); applyUiSettings(); updateFormatSelectVisibility();
-            try {
-                const response = await fetch('/get-models');
-                if (!response.ok) throw new Error('モデル取得に失敗しました。');
-                originalModels = await response.json();
-                [modelSelectTTS, modelSelectBG].forEach(sel => { sel.innerHTML = ''; originalModels.forEach(model => { const option = document.createElement('option'); option.value = model.id; option.textContent = model.name; sel.appendChild(option); }); });
-                if (originalModels.length > 0) { updateSelectOptions(); renderUIForSelectedModel(); } 
-                else { setStatus('利用可能なモデルがありません。', true); }
-            } catch (error) { 
-                console.warn(`モデル取得に失敗しました: ${error.message}。ダミーデータで初期化します。`);
-                setStatus('モデル取得に失敗。ダミーデータを使用します。');
-                originalModels = [
-                     { id: 'dummy_model_1', name: 'ダミーモデルA' },
-                     { id: 'dummy_model_2', name: 'ダミーモデルB' },
-                ];
-                [modelSelectTTS, modelSelectBG].forEach(sel => { sel.innerHTML = ''; originalModels.forEach(model => { const option = document.createElement('option'); option.value = model.id; option.textContent = model.name; sel.appendChild(option); }); });
-                updateSelectOptions(); 
-                renderUIForSelectedModel();
-            }
-            setupEventListeners();
-            updateAllCardUIs();
-        };
-        window.addEventListener('load', init);
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const init = async () => {
+                loadState(); applyUiSettings(); updateFormatSelectVisibility();
+                try {
+                    const response = await fetch('/get-models');
+                    if (!response.ok) throw new Error('モデル取得に失敗しました。');
+                    originalModels = await response.json();
+                    [modelSelectTTS, modelSelectBG].forEach(sel => { sel.innerHTML = ''; originalModels.forEach(model => { const option = document.createElement('option'); option.value = model.id; option.textContent = model.name; sel.appendChild(option); }); });
+                    if (originalModels.length > 0) { updateSelectOptions(); renderUIForSelectedModel(); } 
+                    else { setStatus('利用可能なモデルがありません。', true); }
+                } catch (error) { 
+                    console.warn(`モデル取得に失敗しました: ${error.message}。ダミーデータで初期化します。`);
+                    setStatus('モデル取得に失敗。ダミーデータを使用します。');
+                    originalModels = [
+                         { id: 'dummy_model_1', name: 'ダミーモデルA' },
+                         { id: 'dummy_model_2', name: 'ダミーモデルB' },
+                    ];
+                    [modelSelectTTS, modelSelectBG].forEach(sel => { sel.innerHTML = ''; originalModels.forEach(model => { const option = document.createElement('option'); option.value = model.id; option.textContent = model.name; sel.appendChild(option); }); });
+                    updateSelectOptions(); 
+                    renderUIForSelectedModel();
+                }
+                setupEventListeners();
+                updateAllCardUIs();
+            };
+            init();
+        });
     </script>
 
 </body>
 </html>
+上記のコードを修正して
