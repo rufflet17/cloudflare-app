@@ -1,20 +1,11 @@
-# あなたのCloudflare Pagesプロジェクト名に置き換えてください
+# あなたのCloudflare Pagesプロジェクト名
 name = "cloudflare-app"
 
-# YYYY-MM-DD形式の現在日付に近い日付
+# 安定した過去の日付を指定
 compatibility_date = "2025-08-10" 
 
-# [重要] Cloudflare Pages用の設定。
-# 静的アセットがルートディレクトリにあることを示す。
+# Cloudflare Pages用の設定。静的アセットがルートディレクトリにあることを示す。
 pages_build_output_dir = "."
 
-[compatibility_flags]
-# Node.jsの標準モジュール（stream, cryptoなど）を有効にするための互換フラグ
-nodejs_compat = true
-
-# [[pages.functions]] セクションは、Pages Functionsの高度なルーティングや
-# プラグイン機能を使う際に必要ですが、`functions`ディレクトリを置くだけの
-# シンプルな構成では不要なため、ここでは記述を省略し、
-# Cloudflareの自動検出に任せるのが最もシンプルで確実です。
-# これにより、ビルドシステムが `functions` ディレクトリを自動で検出し、
-# 適切なルーティングを設定してくれます。
+# [重要] 互換性フラグを文字列の配列形式で指定
+compatibility_flags = ["nodejs_compat"]
