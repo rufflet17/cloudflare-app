@@ -1,6 +1,33 @@
-// btoaはNode.js環境ではデフォルトで利用できないため、Cloudflare Workersのグローバルスコープで利用可能なことを前提としています。
+// ★★★ 変更点 ★★★
+// firebase-admin パッケージをインポート
+import { initializeApp, cert, getApps } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 
-// --- APIハンドラー ---
+// --- Firebase Admin SDKの初期化 ---
+// この関数はグローバルな状態を管理する
+let adminApp;
+function initializeFirebaseAdmin(env) {
+  // 既に初期化済みの場合は何もしない
+  if (getApps().length > 0) {
+    return;
+  }
+  
+  try {
+    const serviceAccount = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    // 初期化したアプリをグローバル変数に保持
+    adminApp = initializeApp({
+      credential: cert(serviceAccount),
+    });
+    console.log("Firebase Admin SDK initialized successfully.");
+  } catch (error) {
+    console.error("Critical: Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON. SDK not initialized.", error);
+    // ここでエラーをスローし、初期化の失敗を明確にする
+    throw new Error("Firebase Admin SDK initialization failed due to invalid service account.");
+  }
+}
+
+
+// --- APIハンドラー (onRequest) ---
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
@@ -22,6 +49,7 @@ export async function onRequest(context) {
   return new Response("Not Found", { status: 404 });
 }
 
+// (handleGetModels と handleSynthesize は変更なしのため、ここに貼り付けてください)
 // --- /get-models ハンドラー ---
 async function handleGetModels({ env }) {
   try {
@@ -115,32 +143,67 @@ async function handleSynthesize({ request, env }) {
 // --- /api/* ルートの処理 ---
 async function handleApiRoutes(context) {
     const { request, env } = context;
-    const url = new URL(request.url);
-    const method = request.method;
+    
+    try {
+        // ★★★ 変更点 ★★★
+        // 1. Firebase Admin SDKを初期化
+        //    エラーが発生した場合はcatchブロックで捕捉される
+        initializeFirebaseAdmin(env);
 
-    // --- 認証を削除し、ダミーユーザー情報を設定 ---
-    // セキュリティを考慮しないため、すべてのリクエストを同じ固定ユーザーとして扱う
-    const user = { uid: "shared-user" };
+        // 2. 認証トークンを検証
+        const authHeader = request.headers.get("Authorization");
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+            return new Response(JSON.stringify({ error: "Authorization header is missing or invalid." }), { status: 401, headers: { "Content-Type": "application/json" } });
+        }
+        
+        const idToken = authHeader.split("Bearer ")[1];
+        const decodedToken = await getAuth().verifyIdToken(idToken);
+        const user = decodedToken; // 検証済みのユーザー情報
 
-    // --- ルーティング ---
-    if (url.pathname === '/api/upload' && method === 'POST') {
-        return handleUpload(request, env, user);
-    }
-    if (url.pathname === '/api/list' && method === 'GET') {
-        return handleList(request, env, user);
-    }
-    if (url.pathname.startsWith('/api/get/') && method === 'GET') {
-        const key = url.pathname.substring('/api/get/'.length);
-        return handleGet(request, env, user, key);
-    }
-    if (url.pathname.startsWith('/api/delete/') && method === 'DELETE') {
-        const key = url.pathname.substring('/api/delete/'.length);
-        return handleDelete(request, env, user, key);
-    }
+        // 3. 認証後のルーティング
+        const url = new URL(request.url);
+        const method = request.method;
 
-    return new Response("API Route Not Found", { status: 404 });
+        if (url.pathname === '/api/upload' && method === 'POST') {
+            return handleUpload(request, env, user);
+        }
+        if (url.pathname === '/api/list' && method === 'GET') {
+            return handleList(request, env, user);
+        }
+        if (url.pathname.startsWith('/api/get/') && method === 'GET') {
+            const key = url.pathname.substring('/api/get/'.length);
+            return handleGet(request, env, user, key);
+        }
+        if (url.pathname.startsWith('/api/delete/') && method === 'DELETE') {
+            const key = url.pathname.substring('/api/delete/'.length);
+            return handleDelete(request, env, user, key);
+        }
+
+        return new Response("API Route Not Found", { status: 404 });
+
+    } catch (error) {
+        // ★★★ 変更点 ★★★
+        // Firebase関連のエラーを一元的に処理
+        console.error("Authentication or API error:", error.message);
+        
+        if (error.code === 'auth/id-token-expired') {
+            return new Response(JSON.stringify({ error: 'Token has expired. Please log in again.' }), { status: 403, headers: { "Content-Type": "application/json" } });
+        }
+        if (error.message.includes("Firebase Admin SDK initialization failed")) {
+            return new Response(JSON.stringify({ error: "Server configuration error. Cannot authenticate." }), { status: 500, headers: { "Content-Type": "application/json" } });
+        }
+        
+        // その他の認証エラー
+        if (error.code && error.code.startsWith('auth/')) {
+            return new Response(JSON.stringify({ error: "Invalid or malformed token." }), { status: 403, headers: { "Content-Type": "application/json" } });
+        }
+
+        // 認証以外の予期せぬエラー
+        return new Response(JSON.stringify({ error: "An internal server error occurred." }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
 }
 
+// (handleUpload, handleList, handleGet, handleDelete は変更なしのため、ここに貼り付けてください)
 // --- /api/upload ハンドラー ---
 async function handleUpload(request, env, user) {
     try {
