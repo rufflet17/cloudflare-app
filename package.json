@@ -4,9 +4,7 @@
   "private": true,
   "description": "A static website with Cloudflare Functions for the backend API.",
   "main": "index.js",
-  "scripts": {
-
-  },
+  "scripts": {},
   "keywords": [
     "cloudflare",
     "cloudflare-pages",
@@ -16,5 +14,6 @@
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
+    "jose": "^6.0.12"
   }
 }
