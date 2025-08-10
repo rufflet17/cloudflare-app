@@ -1,45 +1,4 @@
-import { initializeApp, cert, getApps } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
-
-// --- Firebase Admin SDKの初期化 ---
-// 重複初期化を避けるための処理
-function initializeFirebaseAdmin(env) {
-  if (getApps().length === 0) {
-    try {
-      const serviceAccount = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT_JSON);
-      initializeApp({
-        credential: cert(serviceAccount),
-      });
-      console.log("Firebase Admin SDK initialized successfully.");
-    } catch (error) {
-      console.error("Error initializing Firebase Admin SDK:", error);
-      // エラーが発生した場合でも、後続の処理でエラーレスポンスを返すようにする
-    }
-  }
-}
-
-// --- 認証ミドルウェア ---
-async function verifyToken(request, env) {
-  initializeFirebaseAdmin(env); // 毎回初期化チェックを行う
-  
-  const authHeader = request.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return { error: "Authorization header is missing or invalid.", status: 401, user: null };
-  }
-  
-  const idToken = authHeader.split("Bearer ")[1];
-  try {
-    const decodedToken = await getAuth().verifyIdToken(idToken);
-    return { user: decodedToken, error: null, status: 200 };
-  } catch (error) {
-    console.error("Token verification failed:", error.message);
-    let errorMessage = "Invalid or expired token.";
-    if (error.code === 'auth/id-token-expired') {
-        errorMessage = 'Token has expired. Please log in again.';
-    }
-    return { error: errorMessage, status: 403, user: null };
-  }
-}
+// btoaはNode.js環境ではデフォルトで利用できないため、Cloudflare Workersのグローバルスコープで利用可能なことを前提としています。
 
 // --- APIハンドラー ---
 export async function onRequest(context) {
@@ -159,27 +118,21 @@ async function handleApiRoutes(context) {
     const url = new URL(request.url);
     const method = request.method;
 
-    // --- 認証チェック ---
-    const authResult = await verifyToken(request, env);
-    if (authResult.error) {
-        return new Response(JSON.stringify({ error: authResult.error }), { status: authResult.status, headers: { "Content-Type": "application/json" } });
-    }
-    const { user } = authResult;
+    // --- 認証を削除し、ダミーユーザー情報を設定 ---
+    // セキュリティを考慮しないため、すべてのリクエストを同じ固定ユーザーとして扱う
+    const user = { uid: "shared-user" };
 
-    // --- /api/upload ---
+    // --- ルーティング ---
     if (url.pathname === '/api/upload' && method === 'POST') {
         return handleUpload(request, env, user);
     }
-    // --- /api/list ---
     if (url.pathname === '/api/list' && method === 'GET') {
         return handleList(request, env, user);
     }
-    // --- /api/get/[key] ---
     if (url.pathname.startsWith('/api/get/') && method === 'GET') {
         const key = url.pathname.substring('/api/get/'.length);
         return handleGet(request, env, user, key);
     }
-    // --- /api/delete/[key] ---
     if (url.pathname.startsWith('/api/delete/') && method === 'DELETE') {
         const key = url.pathname.substring('/api/delete/'.length);
         return handleDelete(request, env, user, key);
@@ -196,6 +149,7 @@ async function handleUpload(request, env, user) {
             return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
         }
         
+        // Base64デコード
         const audioData = atob(audioBase64);
         const arrayBuffer = new Uint8Array(audioData.length);
         for (let i = 0; i < audioData.length; i++) {
@@ -271,7 +225,6 @@ async function handleGet(request, env, user, key) {
         const headers = new Headers();
         object.writeHttpMetadata(headers);
         headers.set("etag", object.httpEtag);
-        // headers.set("Cache-Control", "public, max-age=31536000"); // 必要に応じてキャッシュ設定
 
         return new Response(object.body, { headers });
 
