@@ -18,8 +18,8 @@ export async function onRequest(context) {
     return handleApiRoutes(context);
   }
 
-  // マッチしない場合は次の処理へ
-  return new Response("Not Found", { status: 404 });
+  // ★修正点1: マッチしない場合は次の処理（静的アセットの配信など）へ
+  return context.next();
 }
 
 // --- /get-models ハンドラー ---
@@ -159,8 +159,8 @@ async function handleUpload(request, env, user) {
         const extension = contentType.split('/')[1] || 'bin';
         const r2Key = `${user.uid}/${crypto.randomUUID()}.${extension}`;
         
-        // R2にアップロード
-        await env.MY_BUCKET.put(r2Key, arrayBuffer, {
+        // ★修正点2: env.MY_BUCKET -> env.MY_R2_BUCKET
+        await env.MY_R2_BUCKET.put(r2Key, arrayBuffer, {
             httpMetadata: { contentType },
         });
 
@@ -173,8 +173,8 @@ async function handleUpload(request, env, user) {
         ).bind(d1Key, r2Key, user.uid, modelId, text, createdAt).run();
 
         if (!success) {
-            // D1への書き込みが失敗したら、アップロードしたR2オブジェクトを削除
-            await env.MY_BUCKET.delete(r2Key);
+            // ★修正点2: env.MY_BUCKET -> env.MY_R2_BUCKET
+            await env.MY_R2_BUCKET.delete(r2Key);
             throw new Error("Failed to write metadata to D1.");
         }
 
@@ -216,7 +216,8 @@ async function handleGet(request, env, user, key) {
             return new Response("File not found or access denied.", { status: 404 });
         }
         
-        const object = await env.MY_BUCKET.get(decodedKey);
+        // ★修正点2: env.MY_BUCKET -> env.MY_R2_BUCKET
+        const object = await env.MY_R2_BUCKET.get(decodedKey);
 
         if (object === null) {
             return new Response("Object Not Found in R2", { status: 404 });
@@ -248,8 +249,8 @@ async function handleDelete(request, env, user, key) {
             return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404 });
         }
         
-        // D1から正常に削除できたら、R2からも削除
-        await env.MY_BUCKET.delete(decodedKey);
+        // ★修正点2: env.MY_BUCKET -> env.MY_R2_BUCKET
+        await env.MY_R2_BUCKET.delete(decodedKey);
 
         return new Response(JSON.stringify({ success: true, key: decodedKey }), { status: 200 });
 
