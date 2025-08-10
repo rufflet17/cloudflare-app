@@ -1,15 +1,10 @@
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 
-// --- 認証ミドルウェア ---
-// Firebaseの公開鍵をGoogleのサーバーから取得するためのJWKSetを準備します。
-// createRemoteJWKSetは内部で賢くキャッシュしてくれるため、パフォーマンスも安心です。
+// Firebaseの公開鍵をGoogleのサーバーから取得するためのJWKSetを準備
 const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com'));
 
 /**
  * リクエストヘッダーからFirebase IDトークンを検証する
- * @param {Request} request - Cloudflareからのリクエストオブジェクト
- * @param {object} env - 環境変数オブジェクト
- * @returns {Promise<{user?: object, error?: Response}>} - 成功時はuser、失敗時はerrorレスポンス
  */
 async function verifyAuth(request, env) {
   const authHeader = request.headers.get('Authorization');
@@ -17,8 +12,8 @@ async function verifyAuth(request, env) {
     return { error: new Response(JSON.stringify({error: 'Missing or invalid Authorization header'}), { status: 401, headers: {'Content-Type': 'application/json'} }) };
   }
 
-  const token = authHeader.substring(7); // "Bearer " の部分を削除
-  const projectId = env.FIREBASE_PROJECT_ID; // 環境変数から取得
+  const token = authHeader.substring(7);
+  const projectId = env.FIREBASE_PROJECT_ID;
 
   if (!projectId) {
       console.error("FATAL: FIREBASE_PROJECT_ID environment variable not set.");
@@ -30,22 +25,18 @@ async function verifyAuth(request, env) {
       issuer: `https://securetoken.google.com/${projectId}`,
       audience: projectId,
     });
-
-    // 検証成功！ペイロードからユーザー情報を返す (subがFirebaseのuidにあたる)
     return { user: { uid: payload.sub, email: payload.email } };
   } catch (err) {
     console.error('Token verification failed:', err.message);
-    let status = 403; // Forbidden
+    let status = 403;
     let message = 'Invalid or expired token.';
-    // 有効期限切れの場合は401を返すと、フロントエンドで再ログインを促しやすい
     if (err.code === 'ERR_JWT_EXPIRED') {
-        status = 401; // Unauthorized
+        status = 401;
         message = 'Token has expired.';
     }
     return { error: new Response(JSON.stringify({error: message}), { status, headers: {'Content-Type': 'application/json'} }) };
   }
 }
-
 
 // --- APIハンドラー ---
 export async function onRequest(context) {
@@ -60,15 +51,12 @@ export async function onRequest(context) {
   if (path === "/synthesize" && method === "POST") {
     return handleSynthesize(context);
   }
-  // /api/ で始まるすべてのルートは認証が必要なAPIルートとして処理
   if (path.startsWith("/api/")) {
     return handleApiRoutes(context);
   }
 
-  // APIルートにマッチしない場合は、Pagesが静的アセットを配信する
   return context.next();
 }
-
 
 // --- /api/* ルートの処理（認証を組み込む） ---
 async function handleApiRoutes(context) {
@@ -76,15 +64,12 @@ async function handleApiRoutes(context) {
     const url = new URL(request.url);
     const method = request.method;
 
-    // ★★★ 認証処理 ★★★
     const authResult = await verifyAuth(request, env);
     if (authResult.error) {
-        return authResult.error; // 認証エラーの場合は、エラーレスポンスを即座に返す
+        return authResult.error;
     }
-    const user = authResult.user; // 検証済みのユーザー情報
-    // ★★★★★★★★★★★
+    const user = authResult.user;
 
-    // --- ルーティング ---
     if (url.pathname === '/api/upload' && method === 'POST') {
         return handleUpload(request, env, user);
     }
@@ -103,27 +88,6 @@ async function handleApiRoutes(context) {
     return new Response("API Route Not Found", { status: 404 });
 }
 
-
-// --- 以下、既存ハンドラの引数に `user` を渡す以外はほぼ変更なし ---
-
-// /get-models と /synthesize は認証不要なので変更なし
-async function handleGetModels({ env }) { /* ...変更なし... */ }
-async function handleSynthesize({ request, env }) { /* ...変更なし... */ }
-
-// /api/upload: userオブジェクトを受け取るように変更
-async function handleUpload(request, env, user) { /* ...変更なし... */ }
-
-// /api/list: userオブジェクトを受け取るように変更
-async function handleList(request, env, user) { /* ...変更なし... */ }
-
-// /api/get/[key]: userオブジェクトを受け取るように変更
-async function handleGet(request, env, user, key) { /* ...keyのデコード部分を移動した以外は変更なし... */ }
-
-// /api/delete/[key]: userオブジェクトを受け取るように変更
-async function handleDelete(request, env, user, key) { /* ...keyのデコード部分を移動した以外は変更なし... */ }
-
-
-/* ===== (ここから下に、変更のない関数定義をペースト) ===== */
 
 // --- /get-models ハンドラー ---
 async function handleGetModels({ env }) {
@@ -272,7 +236,6 @@ async function handleList(request, env, user) {
 // --- /api/get/[key] ハンドラー ---
 async function handleGet(request, env, user, key) {
     try {
-        // D1でキーの存在と所有権を確認
         const stmt = env.MY_D1_DATABASE.prepare("SELECT id FROM audios WHERE r2_key = ? AND user_id = ?");
         const { results } = await stmt.bind(key, user.uid).all();
 
@@ -301,7 +264,6 @@ async function handleGet(request, env, user, key) {
 // --- /api/delete/[key] ハンドラー ---
 async function handleDelete(request, env, user, key) {
     try {
-        // D1でキーの存在と所有権を確認してから削除
         const stmt = env.MY_D1_DATABASE.prepare("DELETE FROM audios WHERE r2_key = ? AND user_id = ? RETURNING id");
         const { results } = await stmt.bind(key, user.uid).all();
 
