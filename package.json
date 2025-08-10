@@ -16,9 +16,7 @@
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
-
-    "firebase-admin": "^12.0.0",
-    "cookie": "^0.6.0",
-    "jsonwebtoken": "^9.0.2"
+    // バックエンドコードで実際に使用しているライブラリがないため、
+    // このセクションは空にするか、削除します。
   }
 }
