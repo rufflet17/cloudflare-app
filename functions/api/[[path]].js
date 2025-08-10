@@ -1,85 +1,111 @@
-// firebase-adminをインポート
-import admin from 'firebase-admin';
+// =================================================================
+// 依存ライブラリのインポート
+// =================================================================
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 
-// --- Firebase Admin SDKの初期化関数 ---
-// この関数は、envオブジェクトを引数として受け取る
-function initializeFirebaseAdmin(env) {
-  // 既に初期化済みの場合は何もしない（2回目以降の呼び出しは即座に終了）
-  if (admin.apps.length > 0) {
-    return;
-  }
-  
-  // 実行時環境変数(env)からサービスアカウント情報を安全に取得
-  // 環境変数が設定されていない場合はエラーを投げる
-  if (!env.FIREBASE_SERVICE_ACCOUNT) {
-    throw new Error('FIREBASE_SERVICE_ACCOUNT environment variable is not set.');
-  }
-  const serviceAccount = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT);
-  
-  // 初期化を実行
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
-}
+// =================================================================
+// 認証ミドルウェア (jose を使用)
+// =================================================================
 
-// --- 認証ミドルウェア ---
-// この関数は、リクエストヘッダーからトークンを検証する
-async function authenticate(request) {
+// Googleの公開鍵を取得するためのURL
+const GOOGLE_JWKS_URL = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
+
+// 公開鍵セットを取得・キャッシュするインスタンスを作成。
+// このインスタンスはリクエスト間で再利用され、パフォーマンスが向上します。
+const JWKS = createRemoteJWKSet(new URL(GOOGLE_JWKS_URL));
+
+/**
+ * リクエストヘッダーのAuthorizationトークンを検証する
+ * @param {Request} request - Cloudflareからのリクエストオブジェクト
+ * @param {object} env - 環境変数が格納されたオブジェクト
+ * @returns {Promise<object|null>} 検証成功時はデコードされたトークンペイロード、失敗時はnull
+ */
+async function authenticate(request, env) {
+  // 1. ヘッダーから "Bearer <token>" 形式でトークンを取得
   const authHeader = request.headers.get('Authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null; // トークンがない
+    return null; // トークンが存在しない
   }
   const idToken = authHeader.split('Bearer ')[1];
+
+  // 2. FirebaseプロジェクトIDを環境変数から取得
+  const firebaseProjectId = env.FIREBASE_PROJECT_ID;
+  if (!firebaseProjectId) {
+    console.error("CRITICAL: FIREBASE_PROJECT_ID environment variable is not set.");
+    // サーバー設定エラーなので例外を投げる
+    throw new Error('Server configuration error: FIREBASE_PROJECT_ID is missing.');
+  }
+
   try {
-    // トークンを検証
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    return decodedToken; // 検証成功、ユーザー情報を返す
+    // 3. joseを使ってトークンを検証
+    const { payload } = await jwtVerify(idToken, JWKS, {
+      issuer: `https://securetoken.google.com/${firebaseProjectId}`,
+      audience: firebaseProjectId,
+    });
+    
+    // 検証成功！ペイロードを返す。
+    // 後続の処理で `user.uid` を参照するため、互換性プロパティを追加。
+    payload.uid = payload.sub; 
+    return payload;
   } catch (error) {
-    // エラーログをより詳細に出力
+    // トークンが無効な場合 (期限切れ、署名不正など)
     console.error('Authentication error:', error.code, error.message);
     return null; // 検証失敗
   }
 }
 
-// --- メインのAPIハンドラー ---
+// =================================================================
+// メインのAPIハンドラー (onRequest)
+// =================================================================
+
 export async function onRequest(context) {
   const { request, env, next } = context;
-
-  // リクエスト処理の最初に、必ず初期化関数を呼び出す
-  try {
-    initializeFirebaseAdmin(env);
-  } catch (e) {
-    console.error('Firebase initialization failed:', e.message);
-    return new Response('Internal Server Error: Firebase configuration error.', { status: 500 });
-  }
 
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
 
-  // ルーティング
-  if (path === "/get-models" && method === "GET") {
-    return handleGetModels(context);
-  }
-  if (path === "/synthesize" && method === "POST") {
-    return handleSynthesize(context);
-  }
-  if (path.startsWith("/api/")) {
-    // /api/ 以下のルートはすべて認証を要求
-    const user = await authenticate(request);
-    if (!user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized. Invalid or missing token.' }), { status: 401 });
+  try {
+    // --- ルーティング ---
+
+    // Public Route (認証不要)
+    if (path === "/get-models" && method === "GET") {
+      return handleGetModels(context);
     }
-    // 認証済みユーザー情報をcontextに追加して次のハンドラへ
-    context.user = user;
-    return handleApiRoutes(context);
+    // Public Route (認証不要)
+    if (path === "/synthesize" && method === "POST") {
+      return handleSynthesize(context);
+    }
+
+    // Secure Routes (認証必須)
+    if (path.startsWith("/api/")) {
+      const user = await authenticate(request, env);
+      if (!user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized. Invalid or missing token.' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      // 認証済みユーザー情報をcontextに追加して、後続のハンドラで使えるようにする
+      context.user = user;
+      return handleApiRoutes(context);
+    }
+
+  } catch (e) {
+    // authenticate関数内で投げられた設定エラーなどをキャッチ
+    console.error('Request processing failed:', e.message);
+    return new Response('Internal Server Error.', { status: 500 });
   }
 
   // どのルートにもマッチしない場合は、静的アセットを探しに行く
   return next();
 }
 
-// --- 各種ハンドラー関数 ---
+// =================================================================
+// 各種APIルートハンドラー
+// =================================================================
+
+// --- Public Handlers ---
 
 async function handleGetModels({ env }) {
   try {
@@ -97,7 +123,7 @@ async function handleGetModels({ env }) {
     });
   } catch (error) {
     console.error("Error in handleGetModels:", error);
-    return new Response(JSON.stringify({ error: "Failed to fetch models." }), { status: 500 });
+    return new Response(JSON.stringify({ error: "Failed to fetch models." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
 
@@ -105,7 +131,7 @@ async function handleSynthesize({ request, env }) {
   try {
     const { model_id, texts, style_id, style_strength, format } = await request.json();
     if (!model_id || !texts || !Array.isArray(texts)) {
-      return new Response(JSON.stringify({ error: "Missing required parameters" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Missing required parameters" }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
     const results = [];
     for (const text of texts) {
@@ -124,9 +150,11 @@ async function handleSynthesize({ request, env }) {
     return new Response(JSON.stringify(results), { headers: { 'Content-Type': 'application/json' } });
   } catch (error) {
     console.error("Error in handleSynthesize:", error);
-    return new Response(JSON.stringify({ error: "Failed to synthesize." }), { status: 500 });
+    return new Response(JSON.stringify({ error: "Failed to synthesize." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
+
+// --- Secure Handlers ---
 
 async function handleApiRoutes({ request, env, user }) {
   const url = new URL(request.url);
@@ -153,16 +181,20 @@ async function handleUpload(request, env, user) {
   try {
     const { modelId, text, audioBase64, contentType } = await request.json();
     if (!modelId || !text || !audioBase64 || !contentType) {
-      return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
-    const audioData = atob(audioBase64);
-    const arrayBuffer = new Uint8Array(audioData.length);
-    for (let i = 0; i < audioData.length; i++) arrayBuffer[i] = audioData.charCodeAt(i);
+    // Base64デコード
+    const binaryStr = atob(audioBase64);
+    const len = binaryStr.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+    }
     
     const extension = contentType.split('/')[1] || 'bin';
     const r2Key = `${user.uid}/${crypto.randomUUID()}.${extension}`;
     
-    await env.MY_R2_BUCKET.put(r2Key, arrayBuffer, { httpMetadata: { contentType } });
+    await env.MY_R2_BUCKET.put(r2Key, bytes, { httpMetadata: { contentType } });
     
     const d1Key = crypto.randomUUID();
     const createdAt = new Date().toISOString();
@@ -172,13 +204,13 @@ async function handleUpload(request, env, user) {
     ).bind(d1Key, r2Key, user.uid, modelId, text, createdAt).run();
     
     if (!success) {
-      await env.MY_R2_BUCKET.delete(r2Key);
+      await env.MY_R2_BUCKET.delete(r2Key); // ロールバック
       throw new Error("Failed to write metadata to D1.");
     }
-    return new Response(JSON.stringify({ success: true, key: r2Key }), { status: 200 });
+    return new Response(JSON.stringify({ success: true, key: r2Key }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   } catch (error) {
     console.error("Upload failed:", error);
-    return new Response(JSON.stringify({ error: "Upload failed." }), { status: 500 });
+    return new Response(JSON.stringify({ error: "Upload failed." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
 
@@ -190,19 +222,23 @@ async function handleList(request, env, user) {
     return new Response(JSON.stringify(results || []), { headers: { "Content-Type": "application/json" } });
   } catch (error) {
     console.error("List failed:", error);
-    return new Response(JSON.stringify({ error: "Failed to list files." }), { status: 500 });
+    return new Response(JSON.stringify({ error: "Failed to list files." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
 
 async function handleGet(request, env, user, key) {
   try {
+    // ファイルが本人のものかD1で確認
     const stmt = env.MY_D1_DATABASE.prepare("SELECT id FROM audios WHERE r2_key = ? AND user_id = ?");
     const { results } = await stmt.bind(key, user.uid).all();
     if (!results || results.length === 0) {
       return new Response("File not found or access denied.", { status: 404 });
     }
+    
     const object = await env.MY_R2_BUCKET.get(key);
-    if (object === null) return new Response("Object Not Found in R2", { status: 404 });
+    if (object === null) {
+      return new Response("Object Not Found in R2", { status: 404 });
+    }
     
     const headers = new Headers();
     object.writeHttpMetadata(headers);
@@ -210,21 +246,24 @@ async function handleGet(request, env, user, key) {
     return new Response(object.body, { headers });
   } catch (error) {
     console.error("Get failed:", error);
-    return new Response(JSON.stringify({ error: "Failed to get file." }), { status: 500 });
+    return new Response(JSON.stringify({ error: "Failed to get file." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
 
 async function handleDelete(request, env, user, key) {
   try {
+    // RETURNING句で削除対象が存在したか確認
     const stmt = env.MY_D1_DATABASE.prepare("DELETE FROM audios WHERE r2_key = ? AND user_id = ? RETURNING id");
     const { results } = await stmt.bind(key, user.uid).all();
+    
     if (!results || results.length === 0) {
-      return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404 });
+      return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404, headers: { 'Content-Type': 'application/json' } });
     }
+    
     await env.MY_R2_BUCKET.delete(key);
-    return new Response(JSON.stringify({ success: true, key }), { status: 200 });
+    return new Response(JSON.stringify({ success: true, key }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   } catch (error) {
     console.error("Delete failed:", error);
-    return new Response(JSON.stringify({ error: "Failed to delete file." }), { status: 500 });
+    return new Response(JSON.stringify({ error: "Failed to delete file." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
