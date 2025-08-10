@@ -1,15 +1,24 @@
 {
-  "name": "cloudflare-app",
+  "name": "my-cloudflare-app",
   "version": "1.0.0",
   "private": true,
+  "description": "A static website with Cloudflare Functions for the backend API.",
+  "main": "index.js",
   "scripts": {
-    "deploy": "wrangler pages deploy",
-    "build": "echo 'Build step not required for this project.'"
+    "// NOTE": "ビルドステップは不要なため、buildスクリプトは定義しません。デプロイはGit pushで行います。"
   },
+  "keywords": [
+    "cloudflare",
+    "cloudflare-pages",
+    "functions",
+    "serverless"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
   "dependencies": {
-    "firebase-admin": "^11.11.1"
-  },
-  "devDependencies": {
-    "wrangler": "^3.0.0"
+    "// NOTE": "ここに関数(Functions)で使うnpmパッケージを追加していきます。",
+    "firebase-admin": "^12.0.0",
+    "cookie": "^0.6.0",
+    "jsonwebtoken": "^9.0.2"
   }
 }
