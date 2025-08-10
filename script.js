@@ -1,6 +1,6 @@
 const SHOW_ADVANCED_FORMATS = true; 
         
-// --- 基本設定 & DOM要素取得 ---
+// --- 基本設定 & DOM要素取得 (R2関連を除く) ---
 const FORMAT_MAPPING = { mp3: { contentType: 'audio/mpeg', extension: 'mp3' }, wav: { contentType: 'audio/wav', extension: 'wav' }, flac: { contentType: 'audio/flac', extension: 'flac' }, opus: { contentType: 'audio/ogg', extension: 'opus' } };
 const STORAGE_KEY = 'ttsAppStorage_v14';
 const modelSelectTTS = document.getElementById('model-select-tts'), modelSelectBG = document.getElementById('model-select-bg'), formatSelect = document.getElementById('format-select');
@@ -33,14 +33,11 @@ const applyBgChangesBtn = document.getElementById('apply-bg-changes-btn');
 const resultsPlaceholder = document.getElementById('results-placeholder');
 const addFirstCardBtn = document.getElementById('add-first-card-btn');
 const saveToR2Btn = document.getElementById('save-to-r2-btn');
-const r2GalleryContainer = document.getElementById('r2-gallery-container');
-const refreshR2GalleryBtn = document.getElementById('refresh-r2-gallery-btn');
 const savePreviewToR2Btn = document.getElementById('save-preview-to-r2-btn');
-const r2SearchModelSelect = document.getElementById('r2-search-model-select');
-const r2SearchTextInput = document.getElementById('r2-search-text-input');
 
 // --- 状態管理 ---
 let appState = {}; let resultStates = {}; let originalModels = [];
+// HTML側のR2スクリプトから参照されるグローバル変数
 let currentCombinedAudioBlob = null;
 let currentCombinedAudioFilename = '';
 let currentPreviewAudioBlob = null;
@@ -55,11 +52,13 @@ const audioContextForDecoding = new (window.AudioContext || window.webkitAudioCo
 
 const loadState = () => { const savedState = localStorage.getItem(STORAGE_KEY); appState = savedState ? JSON.parse(savedState) : {}; appState.uiSettings = { ...defaultUiSettings, ...(appState.uiSettings || {}) }; };
 const saveState = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+// HTML側のR2スクリプトから参照されるグローバル関数
 const getModelData = (modelId) => { if (!appState[modelId]) { const modelName = originalModels.find(m => m.id === modelId)?.name || modelId; appState[modelId] = { displayName: modelName, images: [], activeImageId: null }; } return appState[modelId]; };
 const getActiveImage = (modelId) => modelId ? getModelData(modelId).images.find(img => img.id === getModelData(modelId).activeImageId) : null;
 const getCurrentModelId = () => modelSelectTTS.value;
 
 // --- UI更新関数 ---
+// HTML側のR2スクリプトから参照されるグローバル関数
 const setStatus = (message, isError = false) => { statusDiv.textContent = message; statusDiv.className = isError ? 'status-error' : 'status-info'; };
 const updateSelectOptions = () => { [modelSelectTTS, modelSelectBG].forEach(sel => Array.from(sel.options).forEach(opt => { opt.textContent = getModelData(opt.value).displayName; })); };
 const applyUiSettings = () => { const { width, posX, posY, opacity } = appState.uiSettings; containerWrapper.style.maxWidth = `${width}px`; containerWrapper.style.left = `${posX}px`; containerWrapper.style.top = `${posY}px`; containerWrapper.style.opacity = opacity; uiWidthSlider.value = width; uiWidthInput.value = width; uiOpacitySlider.value = opacity; uiOpacityInput.value = opacity; };
@@ -384,116 +383,6 @@ function audioBufferToWav(buffer) {
     return new Blob([view], { type: "audio/wav" });
 }
 
-let allR2Files = [];
-
-function renderR2Gallery() {
-    if (allR2Files.length === 0) {
-         r2GalleryContainer.innerHTML = '<p>保存されている音声はありません。</p>';
-         return;
-    }
-
-    const selectedModelId = r2SearchModelSelect.value;
-    const searchText = r2SearchTextInput.value.toLowerCase();
-
-    const filteredFiles = allR2Files.filter(file => {
-        const modelMatch = !selectedModelId || file.modelId === selectedModelId;
-        const textMatch = !searchText || file.text.toLowerCase().includes(searchText);
-        return modelMatch && textMatch;
-    });
-
-    if (filteredFiles.length === 0) {
-        r2GalleryContainer.innerHTML = '<p>検索結果に一致する音声はありません。</p>';
-        return;
-    }
-    
-    r2GalleryContainer.innerHTML = '';
-
-    const isModelFiltered = !!selectedModelId;
-
-    filteredFiles.forEach(file => {
-        const card = document.createElement('div');
-        card.className = 'player-card';
-        card.dataset.fileKey = file.key;
-        
-        const displayName = getModelData(file.modelId).displayName || file.modelId;
-        
-        const modelNameHTML = isModelFiltered 
-            ? ''
-            : `<p style="font-weight: bold; margin: 0; word-break: break-all;">${displayName}</p>`;
-
-        card.innerHTML = `
-            <div class="card-main">
-                <div style="margin-bottom: 8px;">
-                    ${modelNameHTML}
-                    <p style="margin: 0; color: #333; word-break: break-all;">${file.text}</p>
-                </div>
-                <audio controls preload="none" src="/api/get/${encodeURIComponent(file.key)}"></audio>
-            </div>
-            <div class="player-actions">
-                 <a href="/api/get/${encodeURIComponent(file.key)}" download="${file.key}" class="icon-btn download-link" title="ダウンロード">📥</a>
-                 <button class="icon-btn btn-delete-r2" title="削除">🗑️</button>
-            </div>
-        `;
-        r2GalleryContainer.appendChild(card);
-    });
-}
-
-async function loadR2Gallery() {
-    r2GalleryContainer.innerHTML = '<p>読み込み中...</p>';
-    try {
-        const response = await fetch('/api/list');
-        if (!response.ok) {
-            const errData = await response.text();
-            try {
-                const errJson = JSON.parse(errData);
-                 throw new Error(errJson.error || '一覧の取得に失敗しました。');
-            } catch (e) {
-                throw new Error(`一覧の取得に失敗しました。サーバーからの応答が不正です: ${errData.substring(0, 100)}`);
-            }
-        }
-
-        const files = await response.json();
-        
-        allR2Files = files.map(file => {
-            const parts = file.key.split('_');
-            const extension = file.key.split('.').pop();
-            let modelId = "不明";
-            let text = "不明";
-
-            if (parts.length >= 3) {
-                modelId = parts[1];
-                text = parts.slice(2).join('_').replace(`.${extension}`, '');
-            }
-
-            return {
-                key: file.key,
-                size: file.size,
-                lastModified: new Date(file.lastModified),
-                modelId: modelId,
-                text: text
-            };
-        }).sort((a, b) => b.lastModified - a.lastModified);
-
-        r2SearchModelSelect.innerHTML = '<option value="">すべてのモデル</option>';
-        const uniqueModelIds = [...new Set(allR2Files.map(f => f.modelId))];
-        uniqueModelIds.forEach(id => {
-            const displayName = getModelData(id).displayName || id;
-            const option = document.createElement('option');
-            option.value = id;
-            option.textContent = displayName;
-            r2SearchModelSelect.appendChild(option);
-        });
-
-        r2SearchTextInput.value = '';
-        renderR2Gallery();
-         
-    } catch (error) {
-        console.error('R2 gallery load error:', error);
-        allR2Files = [];
-        r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`;
-    }
-}
-
 // --- イベントリスナー ---
 const setupEventListeners = () => {
     tabButtons.forEach(button => button.addEventListener('click', () => { 
@@ -504,7 +393,8 @@ const setupEventListeners = () => {
         const activeTab = document.getElementById(`tab-${button.dataset.tab}`);
         activeTab.classList.add('active'); 
         
-        if (button.dataset.tab === 'r2-gallery') {
+        // R2タブがクリックされたら、HTML側で定義されたloadR2Gallery関数を呼び出す
+        if (button.dataset.tab === 'r2-gallery' && typeof loadR2Gallery === 'function') {
             loadR2Gallery();
         }
 
@@ -765,145 +655,6 @@ const setupEventListeners = () => {
 
     addFirstCardBtn.addEventListener('click', () => addResultCard({ status: 'empty', text: '' }));
     exportAllSettingsBtn.addEventListener('click', exportAllSettings);
-
-    saveToR2Btn.addEventListener('click', async () => {
-        if (!currentCombinedAudioBlob || !currentCombinedAudioFilename) {
-            setStatus('保存対象の音声がありません。', true);
-            return;
-        }
-        setStatus('R2に音声を保存中...');
-        saveToR2Btn.disabled = true;
-        try {
-            const reader = new FileReader();
-            reader.readAsDataURL(currentCombinedAudioBlob);
-            reader.onloadend = async () => {
-                const base64Audio = reader.result.split(',')[1];
-                const response = await fetch('/api/upload', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        fileName: currentCombinedAudioFilename,
-                        audioBase64: base64Audio,
-                        contentType: currentCombinedAudioBlob.type
-                    })
-                });
-                if (!response.ok) {
-                    const errorText = (await response.json()).error || response.statusText;
-                    throw new Error(`R2への保存に失敗: ${errorText}`);
-                }
-                const result = await response.json();
-                setStatus(`音声をR2に保存しました: ${result.key}`);
-                const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
-                if(r2TabButton) r2TabButton.click();
-            };
-        } catch (error) {
-            console.error('R2 save error:', error);
-            setStatus(error.message, true);
-        } finally {
-            saveToR2Btn.disabled = false;
-        }
-    });
-    
-    savePreviewToR2Btn.addEventListener('click', async () => {
-        if (!currentPreviewAudioBlob || !currentPreviewAudioFilename) {
-            setStatus('保存対象の結合音声がありません。', true);
-            return;
-        }
-        setStatus('結合音声をR2に保存中...');
-        savePreviewToR2Btn.disabled = true;
-        try {
-            const reader = new FileReader();
-            reader.readAsDataURL(currentPreviewAudioBlob);
-            reader.onloadend = async () => {
-                const base64Audio = reader.result.split(',')[1];
-                const response = await fetch('/api/upload', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        fileName: currentPreviewAudioFilename,
-                        audioBase64: base64Audio,
-                        contentType: currentPreviewAudioBlob.type
-                    })
-                });
-                if (!response.ok) {
-                    const errorText = (await response.json()).error || response.statusText;
-                    throw new Error(`R2への保存に失敗: ${errorText}`);
-                }
-                const result = await response.json();
-                setStatus(`結合音声をR2に保存しました: ${result.key}`);
-                const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
-                if (r2TabButton) r2TabButton.click();
-            };
-        } catch (error) {
-            console.error('R2 save error:', error);
-            setStatus(error.message, true);
-        } finally {
-            savePreviewToR2Btn.disabled = false;
-        }
-    });
-
-    refreshR2GalleryBtn.addEventListener('click', () => {
-        // ボタンがすでに無効なら何もしない
-        if (refreshR2GalleryBtn.disabled) {
-            return;
-        }
-
-        // すぐにボタンを無効化し、テキストを変更
-        refreshR2GalleryBtn.disabled = true;
-        refreshR2GalleryBtn.textContent = '更新中...';
-
-        // loadR2Gallery 関数を呼び出す
-        // then/catch/finally を使って、成功しても失敗してもボタンの状態を戻す
-        loadR2Gallery().finally(() => {
-            // 5秒間のクールダウンを設定
-            const cooldownSeconds = 5;
-            let secondsRemaining = cooldownSeconds;
-
-            // ボタンにカウントダウンを表示
-            refreshR2GalleryBtn.textContent = `更新（${secondsRemaining}秒後）`;
-            
-            const intervalId = setInterval(() => {
-                secondsRemaining--;
-                if (secondsRemaining > 0) {
-                    refreshR2GalleryBtn.textContent = `更新（${secondsRemaining}秒後）`;
-                } else {
-                    // カウントダウン終了
-                    clearInterval(intervalId);
-                    refreshR2GalleryBtn.disabled = false;
-                    refreshR2GalleryBtn.textContent = '一覧を更新';
-                }
-            }, 1000);
-        });
-    });
-    
-    r2SearchModelSelect.addEventListener('change', renderR2Gallery);
-    r2SearchTextInput.addEventListener('input', renderR2Gallery);
-
-    r2GalleryContainer.addEventListener('click', async (e) => {
-        const deleteBtn = e.target.closest('.btn-delete-r2');
-        if (!deleteBtn) return;
-        const card = deleteBtn.closest('.player-card');
-        const fileKey = card.dataset.fileKey;
-        if (confirm(`ファイル「${fileKey}」をR2から完全に削除しますか？この操作は元に戻せません。`)) {
-            try {
-                deleteBtn.disabled = true;
-                deleteBtn.innerHTML = '...';
-                const response = await fetch(`/api/delete/${encodeURIComponent(fileKey)}`, { method: 'DELETE' });
-                if (!response.ok) {
-                    const errorText = (await response.json()).error || response.statusText;
-                    throw new Error(`削除に失敗しました: ${errorText}`);
-                }
-                card.remove();
-                allR2Files = allR2Files.filter(f => f.key !== fileKey);
-                renderR2Gallery();
-
-            } catch(error) {
-                alert(error.message);
-                deleteBtn.disabled = false;
-                deleteBtn.innerHTML = '🗑️';
-            }
-        }
-    });
 };
 
 const updateFormatSelectVisibility = () => {
