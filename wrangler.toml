@@ -1,0 +1,19 @@
+name = "cloudflare-app" # あなたのCloudflare Pagesプロジェクト名に置き換えてください
+compatibility_date = "2025-08-10" # YYYY-MM-DD形式の現在日付に近い日付
+
+[pages_build_output]
+# functionsディレクトリを有効にするための設定
+functions = "functions"
+
+[[rules]]
+# functionsディレクトリ内のコードをすべてのパスで実行
+type = "Functions"
+globs = ["/*"]
+
+[vars]
+# ここに環境変数を定義することもできますが、
+# ダッシュボードで設定している場合は不要です
+
+[compatibility_flags]
+# これが今回のエラーを解決するための最も重要な設定です
+nodejs_compat = true
