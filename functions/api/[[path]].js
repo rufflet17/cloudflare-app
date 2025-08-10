@@ -45,9 +45,7 @@ async function authenticate(request) {
 export async function onRequest(context) {
   const { request, env, next } = context;
 
-  // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-  // ★ リクエスト処理の最初に、必ず初期化関数を呼び出す ★
-  // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+  // リクエスト処理の最初に、必ず初期化関数を呼び出す
   try {
     initializeFirebaseAdmin(env);
   } catch (e) {
@@ -81,20 +79,7 @@ export async function onRequest(context) {
   return next();
 }
 
-
-// --- ここから下は、元のコードから変更ありません ---
-// (ただし、引数で渡される 'user' オブジェクトがセキュアなものになっています)
-
-async function handleGetModels({ env }) { /* ...変更なし... */ }
-async function handleSynthesize({ request, env }) { /* ...変更なし... */ }
-async function handleApiRoutes({ request, env, user }) { /* ...変更なし... */ }
-async function handleUpload(request, env, user) { /* ...変更なし... */ }
-async function handleList(request, env, user) { /* ...変更なし... */ }
-async function handleGet(request, env, user, key) { /* ...変更なし... */ }
-async function handleDelete(request, env, user, key) { /* ...変更なし... */ }
-
-
-// --- 変更なしの関数群 (コピペ用) ---
+// --- 各種ハンドラー関数 ---
 
 async function handleGetModels({ env }) {
   try {
@@ -102,7 +87,10 @@ async function handleGetModels({ env }) {
       `https://api.cloudflare.com/client/v4/accounts/${env.ACCOUNT_ID}/ai/models/search?task=text-to-speech`,
       { headers: { Authorization: `Bearer ${env.API_TOKEN}` } }
     );
-    if (!response.ok) throw new Error(`Cloudflare API error: ${response.status}`);
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Cloudflare API error: ${response.status} ${errorText}`);
+    }
     const data = await response.json();
     return new Response(JSON.stringify(data.result.map(m => ({ id: m.name, name: m.name.split('/').pop() }))), {
       headers: { "Content-Type": "application/json" },
@@ -135,6 +123,7 @@ async function handleSynthesize({ request, env }) {
     }
     return new Response(JSON.stringify(results), { headers: { 'Content-Type': 'application/json' } });
   } catch (error) {
+    console.error("Error in handleSynthesize:", error);
     return new Response(JSON.stringify({ error: "Failed to synthesize." }), { status: 500 });
   }
 }
@@ -142,6 +131,7 @@ async function handleSynthesize({ request, env }) {
 async function handleApiRoutes({ request, env, user }) {
   const url = new URL(request.url);
   const method = request.method;
+  
   if (url.pathname === '/api/upload' && method === 'POST') {
     return handleUpload(request, env, user);
   }
@@ -168,14 +158,19 @@ async function handleUpload(request, env, user) {
     const audioData = atob(audioBase64);
     const arrayBuffer = new Uint8Array(audioData.length);
     for (let i = 0; i < audioData.length; i++) arrayBuffer[i] = audioData.charCodeAt(i);
+    
     const extension = contentType.split('/')[1] || 'bin';
     const r2Key = `${user.uid}/${crypto.randomUUID()}.${extension}`;
+    
     await env.MY_R2_BUCKET.put(r2Key, arrayBuffer, { httpMetadata: { contentType } });
+    
     const d1Key = crypto.randomUUID();
     const createdAt = new Date().toISOString();
+    
     const { success } = await env.MY_D1_DATABASE.prepare(
       `INSERT INTO audios (id, r2_key, user_id, model_name, text_content, created_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).bind(d1Key, r2Key, user.uid, modelId, text, createdAt).run();
+    
     if (!success) {
       await env.MY_R2_BUCKET.delete(r2Key);
       throw new Error("Failed to write metadata to D1.");
@@ -208,6 +203,7 @@ async function handleGet(request, env, user, key) {
     }
     const object = await env.MY_R2_BUCKET.get(key);
     if (object === null) return new Response("Object Not Found in R2", { status: 404 });
+    
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     headers.set("etag", object.httpEtag);
