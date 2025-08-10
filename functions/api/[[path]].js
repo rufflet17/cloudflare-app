@@ -1,18 +1,24 @@
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 
-// Firebaseの公開鍵をGoogleのサーバーから取得するためのJWKSetを準備
-const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com'));
-
 /**
  * リクエストヘッダーからFirebase IDトークンを検証する
+ * @param {Request} request - Cloudflareからのリクエストオブジェクト
+ * @param {object} env - 環境変数とサービスバインディングを含むオブジェクト
+ * @returns {Promise<{user?: object, error?: Response}>} - 成功時はuser、失敗時はerrorレスポンス
  */
 async function verifyAuth(request, env) {
+  // サービスバインディングが設定されているか確認
+  if (!env.GOOGLE_APIS) {
+    console.error("FATAL: GOOGLE_APIS service binding is not configured in wrangler.toml.");
+    return { error: new Response(JSON.stringify({error: 'Server configuration error'}), { status: 500, headers: {'Content-Type': 'application/json'} }) };
+  }
+
   const authHeader = request.headers.get('Authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return { error: new Response(JSON.stringify({error: 'Missing or invalid Authorization header'}), { status: 401, headers: {'Content-Type': 'application/json'} }) };
   }
 
-  const token = authHeader.substring(7);
+  const token = authHeader.substring(7); // "Bearer " の部分を削除
   const projectId = env.FIREBASE_PROJECT_ID;
 
   if (!projectId) {
@@ -21,24 +27,36 @@ async function verifyAuth(request, env) {
   }
 
   try {
+    // サービスバインディング経由でGoogleの公開鍵を取得するためのJWKSオブジェクトを生成
+    const jwksUrl = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
+    const JWKS = createRemoteJWKSet(new URL(jwksUrl), {
+        // joseライブラリが内部で使うfetchを、Cloudflareのサービスバインディングに差し替える
+        fetch: (url, options) => env.GOOGLE_APIS.fetch(url, options)
+    });
+
+    // トークンを検証
     const { payload } = await jwtVerify(token, JWKS, {
       issuer: `https://securetoken.google.com/${projectId}`,
       audience: projectId,
     });
+    
+    // 検証成功！ペイロードからユーザー情報を返す (subがFirebaseのuidにあたる)
     return { user: { uid: payload.sub, email: payload.email } };
   } catch (err) {
-    console.error('Token verification failed:', err.message);
-    let status = 403;
+    console.error('Token verification failed:', err.name, err.message, err.code);
+    let status = 403; // Forbidden
     let message = 'Invalid or expired token.';
     if (err.code === 'ERR_JWT_EXPIRED') {
-        status = 401;
+        status = 401; // Unauthorized
         message = 'Token has expired.';
+    } else if (err.message.includes('malformed') || err.name === 'JOSEError') {
+        message = 'Failed to fetch or validate authentication keys. Service binding might be misconfigured.';
     }
     return { error: new Response(JSON.stringify({error: message}), { status, headers: {'Content-Type': 'application/json'} }) };
   }
 }
 
-// --- APIハンドラー ---
+// --- APIハンドラー (ここから下は変更なし) ---
 export async function onRequest(context) {
   const { request } = context;
   const url = new URL(request.url);
@@ -87,7 +105,6 @@ async function handleApiRoutes(context) {
 
     return new Response("API Route Not Found", { status: 404 });
 }
-
 
 // --- /get-models ハンドラー ---
 async function handleGetModels({ env }) {
