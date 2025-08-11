@@ -1,41 +1,33 @@
 // btoaはNode.js環境ではデフォルトで利用できないため、Cloudflare Workersのグローバルスコープで利用可能なことを前提としています。
 
 // --- JWT検証用のヘルパー関数 (ここから) ---
-
-// Googleの公開鍵(JWK)をキャッシュする変数
+// (このセクションは変更ありません)
 let googlePublicKeys = null;
 let keysFetchTime = 0;
 
-// ★修正点1: JWK形式の公開鍵を取得するように変更
 async function getGooglePublicKeys() {
     const now = Date.now();
-    // 1時間キャッシュする
     if (googlePublicKeys && (now - keysFetchTime < 3600 * 1000)) {
         return googlePublicKeys;
     }
-
-    // X.509証明書のエンドポイントからJWKセットのエンドポイントに変更
     const response = await fetch('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com');
     if (!response.ok) {
         throw new Error('Failed to fetch Google public keys (JWK)');
     }
     const jwks = await response.json();
-    googlePublicKeys = jwks.keys; // "keys"プロパティにJWKの配列が入っている
+    googlePublicKeys = jwks.keys;
     keysFetchTime = now;
     return googlePublicKeys;
 }
 
-// Base64URLデコード
 function base64UrlDecode(str) {
     str = str.replace(/-/g, '+').replace(/_/g, '/');
     while (str.length % 4) {
         str += '=';
     }
-    // Cloudflare Workersではatobがグローバルで利用可能
     return atob(str);
 }
 
-// JWTを検証し、ペイロードを返す関数
 async function verifyFirebaseToken(token, env) {
     try {
         const parts = token.split('.');
@@ -59,21 +51,18 @@ async function verifyFirebaseToken(token, env) {
         if (payload.iss !== `https://securetoken.google.com/${firebaseProjectId}`) throw new Error('Invalid issuer.');
         if (!payload.sub || payload.sub === '') throw new Error('Invalid subject (uid).');
 
-        // ★修正点2: JWKを使って鍵をインポートする処理に変更
-        const jwks = await getGooglePublicKeys(); // jwks はJWKの配列
+        const jwks = await getGooglePublicKeys();
         const jwk = jwks.find(key => key.kid === header.kid);
         if (!jwk) {
-            // 新しいキーが発行された直後は一時的に見つからないことがあるため、キャッシュをクリアして再試行するのも有効
             throw new Error('Public key not found for kid: ' + header.kid);
         }
 
-        // JWKを直接Web Crypto APIにインポートする
         const key = await crypto.subtle.importKey(
             'jwk',
-            jwk, // JWKオブジェクトをそのまま渡す
+            jwk,
             { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-            false, // 鍵のエクスポートは許可しない
-            ['verify'] // 用途は署名検証のみ
+            false,
+            ['verify']
         );
         
         const signature = str2ab(base64UrlDecode(signatureB64));
@@ -83,16 +72,14 @@ async function verifyFirebaseToken(token, env) {
 
         if (!isValid) throw new Error('Signature verification failed');
 
-        return payload; // 検証成功
+        return payload;
 
     } catch (error) {
-        // エラーログをより詳細に表示
         console.error("Token verification failed:", error.name, error.message);
         return null;
     }
 }
 
-// Helper for crypto (署名データの変換に引き続き必要)
 function str2ab(str) {
     const buf = new ArrayBuffer(str.length);
     const bufView = new Uint8Array(buf);
@@ -118,6 +105,7 @@ export async function onRequest(context) {
   if (path === "/synthesize" && method === "POST") {
     return handleSynthesize(context);
   }
+  // /api/ で始まるパスはすべて handleApiRoutes で処理
   if (path.startsWith("/api/")) {
     return handleApiRoutes(context);
   }
@@ -127,6 +115,7 @@ export async function onRequest(context) {
 }
 
 // --- /get-models ハンドラー ---
+// (このセクションは変更ありません)
 async function handleGetModels({ env }) {
   try {
     const response = await fetch(
@@ -145,7 +134,7 @@ async function handleGetModels({ env }) {
     const data = await response.json();
     const models = data.result.map(model => ({
         id: model.name,
-        name: model.name.split('/').pop() // モデル名からプレフィックスを除去
+        name: model.name.split('/').pop()
     }));
     return new Response(JSON.stringify(models), {
       headers: { "Content-Type": "application/json" },
@@ -160,6 +149,7 @@ async function handleGetModels({ env }) {
 }
 
 // --- /synthesize ハンドラー ---
+// (このセクションは変更ありません)
 async function handleSynthesize({ request, env }) {
   try {
     const { model_id, texts, style_id, style_strength, format } = await request.json();
@@ -213,48 +203,65 @@ async function handleSynthesize({ request, env }) {
   }
 }
 
-// --- APIルーティングと認証 ---
+
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+// ★ 修正点: 認証を操作によって切り替えるように変更 ★
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 async function handleApiRoutes(context) {
     const { request, env } = context;
     const url = new URL(request.url);
+    const path = url.pathname;
     const method = request.method;
 
-    // --- 認証処理 ---
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return new Response(JSON.stringify({ error: "Unauthorized: Missing token" }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-    }
-    
-    const token = authHeader.substring(7); // "Bearer " を除去
-    const decodedToken = await verifyFirebaseToken(token, env);
+    let user = null; // 認証されたユーザー情報を格納する変数
 
-    if (!decodedToken) {
-        return new Response(JSON.stringify({ error: "Unauthorized: Invalid token" }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+    // 保護されたルート（投稿、削除）かどうかを判定
+    const isProtectedRoute = 
+        (path === '/api/upload' && method === 'POST') ||
+        (path.startsWith('/api/delete/') && method === 'DELETE');
+
+    // 保護されたルートの場合のみ、認証処理を実行
+    if (isProtectedRoute) {
+        const authHeader = request.headers.get('Authorization');
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return new Response(JSON.stringify({ error: "Unauthorized: Missing token" }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+        }
+        
+        const token = authHeader.substring(7);
+        const decodedToken = await verifyFirebaseToken(token, env);
+
+        if (!decodedToken) {
+            return new Response(JSON.stringify({ error: "Unauthorized: Invalid token" }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+        
+        // 検証成功！ユーザー情報を取得
+        user = { uid: decodedToken.sub };
     }
-    
-    // 検証成功！ユーザー情報を取得
-    const user = { uid: decodedToken.sub }; // `sub` が Firebase の User ID (uid) です
 
     // --- ルーティング ---
-    if (url.pathname === '/api/upload' && method === 'POST') {
-        return handleUpload(request, env, user);
+    
+    // 保護されたルート
+    if (path === '/api/upload' && method === 'POST') {
+        return handleUpload(request, env, user); // 認証済みのuserオブジェクトを渡す
     }
-    if (url.pathname === '/api/list' && method === 'GET') {
-        return handleList(request, env, user);
-    }
-    if (url.pathname.startsWith('/api/get/') && method === 'GET') {
-        const key = url.pathname.substring('/api/get/'.length);
-        return handleGet(request, env, user, key);
-    }
-    if (url.pathname.startsWith('/api/delete/') && method === 'DELETE') {
+    if (path.startsWith('/api/delete/') && method === 'DELETE') {
         const key = url.pathname.substring('/api/delete/'.length);
-        return handleDelete(request, env, user, key);
+        return handleDelete(request, env, user, key); // 認証済みのuserオブジェクトを渡す
+    }
+
+    // 公開ルート
+    if (path === '/api/list' && method === 'GET') {
+        return handleList(request, env); // userオブジェクトは渡さない
+    }
+    if (path.startsWith('/api/get/') && method === 'GET') {
+        const key = url.pathname.substring('/api/get/'.length);
+        return handleGet(request, env, key); // userオブジェクトは渡さない
     }
 
     return new Response("API Route Not Found", { status: 404 });
 }
 
-// --- /api/upload ハンドラー ---
+// --- /api/upload ハンドラー (変更なし) ---
 async function handleUpload(request, env, user) {
     try {
         const { modelId, text, audioBase64, contentType } = await request.json();
@@ -295,12 +302,14 @@ async function handleUpload(request, env, user) {
     }
 }
 
-// --- /api/list ハンドラー ---
-async function handleList(request, env, user) {
+// ★ 修正点: 誰でも一覧を閲覧できるように変更
+async function handleList(request, env) {
     try {
+        // WHERE句を削除して全ユーザーのデータを取得
+        // user_idもSELECTに加えて、誰の投稿かフロントで判別できるようにする
         const { results } = await env.MY_D1_DATABASE.prepare(
-            "SELECT r2_key, model_name, text_content, created_at FROM audios WHERE user_id = ? ORDER BY created_at DESC"
-        ).bind(user.uid).all();
+            "SELECT r2_key, user_id, model_name, text_content, created_at FROM audios ORDER BY created_at DESC"
+        ).all();
 
         return new Response(JSON.stringify(results || []), {
             headers: { "Content-Type": "application/json" },
@@ -312,16 +321,18 @@ async function handleList(request, env, user) {
     }
 }
 
-// --- /api/get/[key] ハンドラー ---
-async function handleGet(request, env, user, key) {
+// ★ 修正点: 誰でも音声を取得できるように変更
+async function handleGet(request, env, key) {
     try {
         const decodedKey = decodeURIComponent(key);
         
-        const stmt = env.MY_D1_DATABASE.prepare("SELECT id FROM audios WHERE r2_key = ? AND user_id = ?");
-        const { results } = await stmt.bind(decodedKey, user.uid).all();
+        // user_idによる絞り込みを削除
+        const stmt = env.MY_D1_DATABASE.prepare("SELECT id FROM audios WHERE r2_key = ?");
+        const { results } = await stmt.bind(decodedKey).all();
 
+        // データベースにメタデータが存在しない場合はファイルなしと判断
         if (!results || results.length === 0) {
-            return new Response("File not found or access denied.", { status: 404 });
+            return new Response("File not found.", { status: 404 });
         }
         
         const object = await env.MY_R2_BUCKET.get(decodedKey);
@@ -342,11 +353,12 @@ async function handleGet(request, env, user, key) {
     }
 }
 
-// --- /api/delete/[key] ハンドラー ---
+// --- /api/delete/[key] ハンドラー (変更なし) ---
 async function handleDelete(request, env, user, key) {
     try {
         const decodedKey = decodeURIComponent(key);
 
+        // user_idでの絞り込みは残し、本人しか削除できないようにする
         const stmt = env.MY_D1_DATABASE.prepare("DELETE FROM audios WHERE r2_key = ? AND user_id = ? RETURNING id");
         const { results } = await stmt.bind(decodedKey, user.uid).all();
 
