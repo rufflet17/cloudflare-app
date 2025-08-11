@@ -1,52 +1,103 @@
 // btoaはNode.js環境ではデフォルトで利用できないため、Cloudflare Workersのグローバルスコープで利用可能なことを前提としています。
 
-// ★★★★★ 修正点: joseライブラリをCDNからインポート ★★★★★
-import * as jose from 'https://esm.sh/jose';
-
 // --- JWT検証用のヘルパー関数 (ここから) ---
 
-// ★★★★★ 修正点: joseを使った新しいJWT検証関数に置き換える ★★★★★
+// Googleの公開鍵をキャッシュする変数
+let googlePublicKeys = null;
+let keysFetchTime = 0;
 
-// Googleの公開鍵セット(JWKS)を取得するためのURL
-// joseライブラリがこのURLから鍵を取得し、キャッシュも自動で行ってくれます。
-const JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
+async function getGooglePublicKeys() {
+    const now = Date.now();
+    // 1時間キャッシュする
+    if (googlePublicKeys && (now - keysFetchTime < 3600 * 1000)) {
+        return googlePublicKeys;
+    }
+
+    const response = await fetch('https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com');
+    if (!response.ok) {
+        throw new Error('Failed to fetch Google public keys');
+    }
+    googlePublicKeys = await response.json();
+    keysFetchTime = now;
+    return googlePublicKeys;
+}
+
+// Base64URLデコード
+function base64UrlDecode(str) {
+    str = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (str.length % 4) {
+        str += '=';
+    }
+    // Cloudflare Workersではatobがグローバルで利用可能
+    return atob(str);
+}
 
 // JWTを検証し、ペイロードを返す関数
 async function verifyFirebaseToken(token, env) {
     try {
+        const parts = token.split('.');
+        if (parts.length !== 3) throw new Error('Invalid token structure');
+        
+        const [headerB64, payloadB64, signatureB64] = parts;
+        const header = JSON.parse(base64UrlDecode(headerB64));
+        const payload = JSON.parse(base64UrlDecode(payloadB64));
+
+        if (header.alg !== 'RS256') throw new Error('Invalid algorithm. Expected RS256.');
+
+        const now = Math.floor(Date.now() / 1000);
+        if (payload.auth_time > now) throw new Error('Token auth_time is in the future.');
+        if (payload.iat > now) throw new Error('Token iat is in the future.');
+        if (payload.exp < now) throw new Error('Token has expired.');
+        
         // ★★★★★ 重要 ★★★★★
         // wrangler.tomlまたはCloudflareダッシュボードの環境変数に `FIREBASE_PROJECT_ID` を設定してください
-        const firebaseProjectId = env.FIREBASE_PROJECT_ID;
-        if (!firebaseProjectId) {
-            throw new Error("FIREBASE_PROJECT_ID is not set in environment variables.");
+        const firebaseProjectId = env.FIREBASE_PROJECT_ID; 
+        if (!firebaseProjectId) throw new Error("FIREBASE_PROJECT_ID is not set in environment variables.");
+        
+        if (payload.aud !== firebaseProjectId) throw new Error('Invalid audience.');
+        if (payload.iss !== `https://securetoken.google.com/${firebaseProjectId}`) throw new Error('Invalid issuer.');
+        if (!payload.sub || payload.sub === '') throw new Error('Invalid subject (uid).');
+
+        const keys = await getGooglePublicKeys();
+        const publicKeyPem = keys[header.kid];
+        if (!publicKeyPem) {
+            throw new Error('Public key not found for kid: ' + header.kid);
         }
 
-        // 1. リモートのJWKS（公開鍵セット）を準備
-        const JWKS = jose.createRemoteJWKSet(new URL(JWKS_URL));
+        const binaryDer = str2ab(atob(publicKeyPem.replace(/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\n/g, '')));
+        
+        const key = await crypto.subtle.importKey(
+            'spki',
+            binaryDer,
+            { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+            false,
+            ['verify']
+        );
+        
+        const signature = str2ab(base64UrlDecode(signatureB64));
+        const data = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
+        
+        const isValid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, data);
 
-        // 2. JWTを検証
-        // jwtVerifyは、署名の検証、有効期限(exp)、発行者(iss)、対象者(aud)などの
-        // 標準的なチェックをすべて一度に行ってくれます。
-        const { payload } = await jose.jwtVerify(token, JWKS, {
-            issuer: `https://securetoken.google.com/${firebaseProjectId}`,
-            audience: firebaseProjectId,
-        });
+        if (!isValid) throw new Error('Signature verification failed');
 
-        // 3. 検証成功。ペイロードを返す
-        return payload;
+        return payload; // 検証成功
 
     } catch (error) {
-        // joseは検証に失敗するとエラーをスローします（例: Signature verification failed, JWT expiredなど）。
-        // エラー内容をログに出力しておくとデバッグに役立ちます。
         console.error("Token verification failed:", error.message);
-        return null; // 検証失敗時はnullを返す
+        return null;
     }
 }
 
-// ★★★★★ 修正点: 以下の自作ヘルパー関数は不要になったため削除 ★★★★★
-// - getGooglePublicKeys
-// - base64UrlDecode
-// - str2ab
+// Helper for crypto
+function str2ab(str) {
+    const buf = new ArrayBuffer(str.length);
+    const bufView = new Uint8Array(buf);
+    for (let i = 0, strLen = str.length; i < strLen; i++) {
+        bufView[i] = str.charCodeAt(i);
+    }
+    return buf;
+}
 // --- JWT検証用のヘルパー関数 (ここまで) ---
 
 
@@ -64,6 +115,7 @@ export async function onRequest(context) {
   if (path === "/synthesize" && method === "POST") {
     return handleSynthesize(context);
   }
+  // ★ 修正点: /api/ で始まるパスはすべて handleApiRoutes で処理
   if (path.startsWith("/api/")) {
     return handleApiRoutes(context);
   }
@@ -160,7 +212,9 @@ async function handleSynthesize({ request, env }) {
 }
 
 
-// --- /api/ ルートの統合ハンドラー ---
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+// ★ 修正点: ダミーユーザーを削除し、トークン検証処理を追加 ★
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 async function handleApiRoutes(context) {
     const { request, env } = context;
     const url = new URL(request.url);
@@ -209,7 +263,6 @@ async function handleUpload(request, env, user) {
             return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400, headers: { 'Content-Type': 'application/json' } });
         }
         
-        // atobはCloudflare Workersのグローバルスコープで利用可能
         const audioData = atob(audioBase64);
         const arrayBuffer = new Uint8Array(audioData.length);
         for (let i = 0; i < audioData.length; i++) {
