@@ -64,6 +64,9 @@ async function verifyFirebaseToken(token, env) {
             throw new Error('Public key not found for kid: ' + header.kid);
         }
 
+        // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+        // ★ 修正済みのコードブロック ★
+        // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
         const binaryDer = str2ab(atob(publicKeyPem.replace(/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\n/g, '')));
         
         const key = await crypto.subtle.importKey(
@@ -115,7 +118,7 @@ export async function onRequest(context) {
   if (path === "/synthesize" && method === "POST") {
     return handleSynthesize(context);
   }
-  // ★ 修正点: /api/ で始まるパスはすべて handleApiRoutes で処理
+  // /api/ で始まるパスはすべて handleApiRoutes で処理
   if (path.startsWith("/api/")) {
     return handleApiRoutes(context);
   }
@@ -211,10 +214,7 @@ async function handleSynthesize({ request, env }) {
   }
 }
 
-
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-// ★ 修正点: ダミーユーザーを削除し、トークン検証処理を追加 ★
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+// --- /api/* ルートの処理 ---
 async function handleApiRoutes(context) {
     const { request, env } = context;
     const url = new URL(request.url);
