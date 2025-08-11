@@ -2,10 +2,11 @@
 
 // --- JWT検証用のヘルパー関数 (ここから) ---
 
-// Googleの公開鍵をキャッシュする変数
+// Googleの公開鍵(JWK)をキャッシュする変数
 let googlePublicKeys = null;
 let keysFetchTime = 0;
 
+// ★修正点1: JWK形式の公開鍵を取得するように変更
 async function getGooglePublicKeys() {
     const now = Date.now();
     // 1時間キャッシュする
@@ -13,11 +14,13 @@ async function getGooglePublicKeys() {
         return googlePublicKeys;
     }
 
-    const response = await fetch('https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com');
+    // X.509証明書のエンドポイントからJWKセットのエンドポイントに変更
+    const response = await fetch('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com');
     if (!response.ok) {
-        throw new Error('Failed to fetch Google public keys');
+        throw new Error('Failed to fetch Google public keys (JWK)');
     }
-    googlePublicKeys = await response.json();
+    const jwks = await response.json();
+    googlePublicKeys = jwks.keys; // "keys"プロパティにJWKの配列が入っている
     keysFetchTime = now;
     return googlePublicKeys;
 }
@@ -49,8 +52,6 @@ async function verifyFirebaseToken(token, env) {
         if (payload.iat > now) throw new Error('Token iat is in the future.');
         if (payload.exp < now) throw new Error('Token has expired.');
         
-        // ★★★★★ 重要 ★★★★★
-        // wrangler.tomlまたはCloudflareダッシュボードの環境変数に `FIREBASE_PROJECT_ID` を設定してください
         const firebaseProjectId = env.FIREBASE_PROJECT_ID; 
         if (!firebaseProjectId) throw new Error("FIREBASE_PROJECT_ID is not set in environment variables.");
         
@@ -58,20 +59,21 @@ async function verifyFirebaseToken(token, env) {
         if (payload.iss !== `https://securetoken.google.com/${firebaseProjectId}`) throw new Error('Invalid issuer.');
         if (!payload.sub || payload.sub === '') throw new Error('Invalid subject (uid).');
 
-        const keys = await getGooglePublicKeys();
-        const publicKeyPem = keys[header.kid];
-        if (!publicKeyPem) {
+        // ★修正点2: JWKを使って鍵をインポートする処理に変更
+        const jwks = await getGooglePublicKeys(); // jwks はJWKの配列
+        const jwk = jwks.find(key => key.kid === header.kid);
+        if (!jwk) {
+            // 新しいキーが発行された直後は一時的に見つからないことがあるため、キャッシュをクリアして再試行するのも有効
             throw new Error('Public key not found for kid: ' + header.kid);
         }
 
-        const binaryDer = str2ab(atob(publicKeyPem.replace(/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\n/g, '')));
-        
+        // JWKを直接Web Crypto APIにインポートする
         const key = await crypto.subtle.importKey(
-            'spki',
-            binaryDer,
+            'jwk',
+            jwk, // JWKオブジェクトをそのまま渡す
             { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-            false,
-            ['verify']
+            false, // 鍵のエクスポートは許可しない
+            ['verify'] // 用途は署名検証のみ
         );
         
         const signature = str2ab(base64UrlDecode(signatureB64));
@@ -84,12 +86,13 @@ async function verifyFirebaseToken(token, env) {
         return payload; // 検証成功
 
     } catch (error) {
-        console.error("Token verification failed:", error.message);
+        // エラーログをより詳細に表示
+        console.error("Token verification failed:", error.name, error.message);
         return null;
     }
 }
 
-// Helper for crypto
+// Helper for crypto (署名データの変換に引き続き必要)
 function str2ab(str) {
     const buf = new ArrayBuffer(str.length);
     const bufView = new Uint8Array(buf);
@@ -115,7 +118,6 @@ export async function onRequest(context) {
   if (path === "/synthesize" && method === "POST") {
     return handleSynthesize(context);
   }
-  // ★ 修正点: /api/ で始まるパスはすべて handleApiRoutes で処理
   if (path.startsWith("/api/")) {
     return handleApiRoutes(context);
   }
@@ -211,10 +213,7 @@ async function handleSynthesize({ request, env }) {
   }
 }
 
-
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-// ★ 修正点: ダミーユーザーを削除し、トークン検証処理を追加 ★
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+// --- APIルーティングと認証 ---
 async function handleApiRoutes(context) {
     const { request, env } = context;
     const url = new URL(request.url);
