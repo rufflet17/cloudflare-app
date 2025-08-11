@@ -160,19 +160,14 @@
         }
         .tab-button.locked-feature::after { border-radius: 0; font-size: 0.8em; }
         #r2-gallery-wrapper.locked-feature::after { border-radius: 8px; }
-        /* ★追加: ページネーションスタイル */
-        #pagination-controls { display: flex; justify-content: center; align-items: center; gap: 5px; margin-top: 1rem; flex-wrap: wrap; }
-        .page-btn { padding: 8px 12px; font-size: 14px; background-color: #f0f0f0; border: 1px solid #ccc; color: var(--primary-color); }
-        .page-btn:hover { background-color: #e0e0e0; }
-        .page-btn.active { background-color: var(--primary-color); color: white; border-color: var(--primary-color); font-weight: bold; }
-        .page-btn:disabled { background-color: #e9ecef; color: #6c757d; cursor: not-allowed; border-color: #dee2e6;}
-        .page-info { font-size: 14px; color: #6c757d; margin: 0 10px; }
     </style>
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
 </head>
 <body>
+    <!-- オーバーレイは削除 -->
+
     <div id="auth-status-container">
         <div id="user-display-wrapper" style="display: none;">
             <span id="user-info" title=""></span>
@@ -235,15 +230,6 @@
                     <div class="button-group" style="margin-top: 0; margin-bottom: 1rem;">
                         <button id="refresh-r2-gallery-btn">一覧を更新</button>
                     </div>
-                    <!-- ★★★★★ 変更点 ★★★★★ -->
-                    <div class="setting-item" id="my-uploads-toggle-wrapper" style="margin-bottom: 1rem;">
-                        <label for="my-uploads-toggle" class="toggle-switch-label">
-                            <span>自分がアップロードした音声のみ表示</span>
-                            <input type="checkbox" id="my-uploads-toggle" class="toggle-switch" disabled>
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                    <!-- ★★★★★ 変更点ここまで ★★★★★ -->
                     <div class="grid-container">
                         <div class="setting-item" style="margin-bottom:0;">
                             <label for="r2-search-model-select">モデル名で検索:</label>
@@ -259,9 +245,6 @@
                     <div id="r2-gallery-container">
                          <p>「一覧を更新」ボタンを押して、保存済みの音声を表示します。</p>
                     </div>
-                    <!-- ★★★★★ 変更点 ★★★★★ -->
-                    <div id="pagination-controls"></div>
-                    <!-- ★★★★★ 変更点ここまで ★★★★★ -->
                 </div>
             </div>
             
@@ -279,309 +262,7 @@
         <button id="apply-bg-changes-btn" class="btn-reset" style="margin-top: 0; background-color: var(--success-color);">この設定を適用</button>
     </div>
 
-    <script>
-    // ★★★★★ 変更点: auth.js と script.js の内容を統合・改修 ★★★★★
-    document.addEventListener('DOMContentLoaded', () => {
+    <script src="script.js"></script>
 
-        // --- Firebase Auth ---
-        // TODO: ここにFirebaseプロジェクトの設定を貼り付けてください
-        const firebaseConfig = {
-            apiKey: "YOUR_API_KEY",
-            authDomain: "YOUR_AUTH_DOMAIN",
-            projectId: "YOUR_PROJECT_ID",
-            storageBucket: "YOUR_STORAGE_BUCKET",
-            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-            appId: "YOUR_APP_ID"
-        };
-
-        firebase.initializeApp(firebaseConfig);
-        const auth = firebase.auth();
-        const provider = new firebase.auth.GoogleAuthProvider();
-
-        const loginBtn = document.getElementById('login-btn');
-        const logoutBtn = document.getElementById('logout-btn');
-        const userDisplayWrapper = document.getElementById('user-display-wrapper');
-        const userInfoSpan = document.getElementById('user-info');
-        const editUsernameBtn = document.getElementById('edit-username-btn');
-        
-        const myUploadsToggle = document.getElementById('my-uploads-toggle');
-        const myUploadsToggleWrapper = document.getElementById('my-uploads-toggle-wrapper');
-
-        loginBtn.addEventListener('click', () => {
-            auth.signInWithPopup(provider).catch(error => {
-                console.error("Login failed:", error);
-                alert(`ログインに失敗しました: ${error.message}`);
-            });
-        });
-
-        logoutBtn.addEventListener('click', () => {
-            auth.signOut().catch(error => {
-                console.error("Logout failed:", error);
-                alert(`ログアウトに失敗しました: ${error.message}`);
-            });
-        });
-
-        editUsernameBtn.addEventListener('click', () => {
-            const newName = prompt("新しい表示名を入力してください:", auth.currentUser.displayName);
-            if (newName && newName.trim() !== "") {
-                auth.currentUser.updateProfile({
-                    displayName: newName.trim()
-                }).then(() => {
-                    updateUserUI(auth.currentUser);
-                }).catch(error => {
-                    console.error("Username update failed:", error);
-                    alert(`表示名の変更に失敗しました: ${error.message}`);
-                });
-            }
-        });
-
-        auth.onAuthStateChanged(user => {
-            updateUserUI(user);
-            updateLockFeatures(user);
-            // ログイン状態が変わったらギャラリーをリフレッシュ
-            if (document.querySelector('.tab-button[data-tab="r2-gallery"]').classList.contains('active')) {
-                 refreshR2Gallery(true);
-            }
-        });
-
-        function updateUserUI(user) {
-            if (user) {
-                loginBtn.style.display = 'none';
-                logoutBtn.style.display = 'block';
-                userDisplayWrapper.style.display = 'flex';
-                userInfoSpan.textContent = user.displayName || user.email;
-                userInfoSpan.title = user.email;
-                myUploadsToggle.disabled = false;
-                myUploadsToggleWrapper.classList.remove('locked-feature');
-            } else {
-                loginBtn.style.display = 'block';
-                logoutBtn.style.display = 'none';
-                userDisplayWrapper.style.display = 'none';
-                myUploadsToggle.checked = false;
-                myUploadsToggle.disabled = true;
-                myUploadsToggleWrapper.classList.add('locked-feature');
-            }
-        }
-        
-        function updateLockFeatures(user) {
-            const lockedElements = document.querySelectorAll('.locked-feature');
-            lockedElements.forEach(el => {
-                if (user) {
-                    el.classList.remove('locked-feature');
-                } else {
-                    el.classList.add('locked-feature');
-                }
-            });
-        }
-        
-        // --- Main Script ---
-        // R2ギャラリーの状態
-        let r2CurrentPage = 1;
-        let r2TotalPages = 1;
-        
-        // DOM要素の取得
-        const refreshR2GalleryBtn = document.getElementById('refresh-r2-gallery-btn');
-        const r2SearchModelSelect = document.getElementById('r2-search-model-select');
-        const r2SearchTextInput = document.getElementById('r2-search-text-input');
-        const r2GalleryContainer = document.getElementById('r2-gallery-container');
-        const paginationControls = document.getElementById('pagination-controls');
-
-        // R2ギャラリー関連のイベントリスナー
-        refreshR2GalleryBtn.addEventListener('click', () => refreshR2Gallery(true));
-        myUploadsToggle.addEventListener('change', () => refreshR2Gallery(true));
-        r2SearchModelSelect.addEventListener('change', () => refreshR2Gallery(true));
-        
-        let searchDebounceTimer;
-        r2SearchTextInput.addEventListener('input', () => {
-            clearTimeout(searchDebounceTimer);
-            searchDebounceTimer = setTimeout(() => {
-                refreshR2Gallery(true);
-            }, 500); // 500msのデバウンス
-        });
-
-        // タブ切り替え時にギャラリーを更新
-        document.querySelectorAll('.tab-button[data-tab="r2-gallery"]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                setTimeout(() => refreshR2Gallery(false), 0); // タブが表示されてから実行
-            });
-        });
-
-        async function getAuthHeader() {
-            const user = auth.currentUser;
-            if (!user) return {};
-            try {
-                const token = await user.getIdToken();
-                return { 'Authorization': `Bearer ${token}` };
-            } catch (error) {
-                console.error("Failed to get ID token:", error);
-                return {};
-            }
-        }
-
-        async function refreshR2Gallery(resetPage = false) {
-            if (resetPage) {
-                r2CurrentPage = 1;
-            }
-            
-            r2GalleryContainer.innerHTML = '<p>読み込み中...</p>';
-            paginationControls.innerHTML = '';
-            
-            try {
-                const showMyUploads = myUploadsToggle.checked;
-                const searchModel = r2SearchModelSelect.value;
-                const searchText = r2SearchTextInput.value;
-
-                const queryParams = new URLSearchParams({ page: r2CurrentPage });
-                if (showMyUploads) queryParams.set('myUploads', 'true');
-                if (searchModel) queryParams.set('model', searchModel);
-                if (searchText) queryParams.set('text', searchText);
-                
-                const headers = await getAuthHeader();
-                const response = await fetch(`/api/list?${queryParams.toString()}`, { headers });
-
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.error || `サーバーエラー: ${response.status}`);
-                }
-
-                const result = await response.json();
-                r2TotalPages = result.totalPages;
-                r2CurrentPage = result.currentPage;
-
-                displayR2Gallery(result.data);
-                renderPagination();
-
-            } catch (error) {
-                console.error("Error refreshing R2 gallery:", error);
-                r2GalleryContainer.innerHTML = `<p style="color: red;">一覧の取得に失敗しました: ${error.message}</p>`;
-            }
-        }
-
-        function displayR2Gallery(items) {
-            r2GalleryContainer.innerHTML = '';
-            if (!items || items.length === 0) {
-                r2GalleryContainer.innerHTML = '<p>該当する音声はありません。</p>';
-                return;
-            }
-            const currentUser = auth.currentUser;
-            items.forEach(item => {
-                const canDelete = currentUser && currentUser.uid === item.user_id;
-                const card = createR2PlayerCard(item, canDelete);
-                r2GalleryContainer.appendChild(card);
-            });
-        }
-        
-        function createR2PlayerCard(item, canDelete) {
-            const card = document.createElement('div');
-            card.className = 'player-card';
-            card.innerHTML = `
-                <div class="card-main">
-                    <p style="font-size: 0.8em; color: #6c757d; margin: 0;">
-                        <b>Model:</b> ${item.model_name || 'N/A'}<br>
-                        <b>Saved:</b> ${new Date(item.created_at).toLocaleString()}
-                    </p>
-                    <p style="margin: 0; font-weight: 500; word-break: break-all;">${item.text_content}</p>
-                    <audio controls src="/api/get/${encodeURIComponent(item.r2_key)}" preload="metadata"></audio>
-                </div>
-                <div class="card-actions-wrapper">
-                    <div class="player-actions">
-                        <a href="/api/get/${encodeURIComponent(item.r2_key)}" download="${item.text_content.substring(0, 20)}.mp3" class="download-link icon-btn" title="ダウンロード">📥</a>
-                        <button class="icon-btn btn-delete-r2" title="削除" ${canDelete ? '' : 'disabled'}>🗑️</button>
-                    </div>
-                </div>
-            `;
-            if (canDelete) {
-                card.querySelector('.btn-delete-r2').addEventListener('click', async () => {
-                    if (confirm(`「${item.text_content}」を削除しますか？この操作は元に戻せません。`)) {
-                        try {
-                            const headers = await getAuthHeader();
-                            const response = await fetch(`/api/delete/${encodeURIComponent(item.r2_key)}`, {
-                                method: 'DELETE',
-                                headers
-                            });
-                            if (!response.ok) throw new Error('削除に失敗しました。');
-                            card.remove();
-                            // ページ上のアイテムがなくなったら再読み込み
-                            if(r2GalleryContainer.children.length === 0) {
-                                refreshR2Gallery(true);
-                            }
-                        } catch (error) {
-                            alert(error.message);
-                        }
-                    }
-                });
-            }
-            return card;
-        }
-
-        function renderPagination() {
-            paginationControls.innerHTML = '';
-            if (r2TotalPages <= 1) return;
-
-            const prevBtn = document.createElement('button');
-            prevBtn.textContent = '« 前へ';
-            prevBtn.className = 'page-btn';
-            prevBtn.disabled = r2CurrentPage <= 1;
-            prevBtn.addEventListener('click', () => {
-                r2CurrentPage--;
-                refreshR2Gallery();
-            });
-            paginationControls.appendChild(prevBtn);
-            
-            const pageInfo = document.createElement('span');
-            pageInfo.className = 'page-info';
-            pageInfo.textContent = `${r2CurrentPage} / ${r2TotalPages}`;
-            paginationControls.appendChild(pageInfo);
-
-            const nextBtn = document.createElement('button');
-            nextBtn.textContent = '次へ »';
-            nextBtn.className = 'page-btn';
-            nextBtn.disabled = r2CurrentPage >= r2TotalPages;
-            nextBtn.addEventListener('click', () => {
-                r2CurrentPage++;
-                refreshR2Gallery();
-            });
-            paginationControls.appendChild(nextBtn);
-        }
-
-        // --- 他の機能の初期化 ---
-        // (元のscript.jsの内容から、UI操作など主要でない部分を簡略化してここに配置)
-        // タブ切り替えロジック
-        document.querySelectorAll('.tab-button').forEach(button => {
-            button.addEventListener('click', () => {
-                if (button.classList.contains('locked-feature')) return;
-                const tab = button.dataset.tab;
-                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
-                button.classList.add('active');
-                document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-                document.getElementById(`tab-${tab}`).classList.add('active');
-            });
-        });
-
-        // モデル一覧の取得など、アプリケーションの初期化処理
-        async function initializeApp() {
-            try {
-                const response = await fetch('/get-models');
-                const models = await response.json();
-                const modelSelects = document.querySelectorAll('#model-select-tts, #model-select-bg, #r2-search-model-select');
-                modelSelects.forEach(select => {
-                    if (select.id !== 'r2-search-model-select') select.innerHTML = '';
-                    models.forEach(model => {
-                        const option = document.createElement('option');
-                        option.value = model.id;
-                        option.textContent = model.name;
-                        select.appendChild(option);
-                    });
-                });
-            } catch (error) {
-                console.error("Failed to initialize models:", error);
-            }
-        }
-
-        initializeApp();
-        // ここに他のUI操作（ドラッグ、リサイズ、音声生成など）のコードが続きます...
-        // ... (元のscript.jsの他の部分は省略)
-    });
-    </script>
 </body>
 </html>
