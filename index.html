@@ -160,28 +160,14 @@
         }
         .tab-button.locked-feature::after { border-radius: 0; font-size: 0.8em; }
         #r2-gallery-wrapper.locked-feature::after { border-radius: 8px; }
-        /* ★追加: ページネーション用スタイル */
-        #r2-pagination-controls {
-            display: none;
-            justify-content: center;
-            align-items: center;
-            margin-top: 1rem;
-        }
-        #r2-pagination-controls .icon-btn {
-            width: 40px;
-            height: 40px;
-        }
-        #r2-page-info {
-            margin: 0 15px;
-            font-weight: bold;
-            font-size: 1rem;
-        }
     </style>
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
 </head>
 <body>
+    <!-- オーバーレイは削除 -->
+
     <div id="auth-status-container">
         <div id="user-display-wrapper" style="display: none;">
             <span id="user-info" title=""></span>
@@ -204,7 +190,6 @@
             </div>
         </div>
         <div class="container-content">
-            <!-- 音声合成タブ (変更なし) -->
             <div id="tab-tts" class="tab-content active">
                 <div class="grid-container"><div><label for="model-select-tts">音声モデル:</label><select id="model-select-tts"></select></div></div>
                 <div class="grid-container"><div><label for="style-id-input">スタイルID (例: 0, 1, ...):</label><input type="number" id="style-id-input" value="0" min="0"></div><div><label for="style_strength">スタイル強度:</label><div class="slider-container"><input type="range" id="style_strength" min="0" max="2" step="0.05" value="1.0"><span id="strength-value">1.00</span></div></div></div>
@@ -221,7 +206,6 @@
                 </div>
             </div>
 
-            <!-- 合成結果タブ (変更なし) -->
             <div id="tab-results" class="tab-content">
                 <div class="button-group" style="margin-top: 0; margin-bottom: 20px;">
                     <button id="generate-preview-btn">結合プレビューを生成</button>
@@ -241,7 +225,6 @@
                 </div>
             </div>
 
-            <!-- ★★★ R2ギャラリータブ (大幅変更) ★★★ -->
             <div id="tab-r2-gallery" class="tab-content">
                 <div id="r2-gallery-wrapper">
                     <div class="button-group" style="margin-top: 0; margin-bottom: 1rem;">
@@ -259,32 +242,15 @@
                             <input type="text" id="r2-search-text-input" placeholder="テキストキーワード...">
                         </div>
                     </div>
-                    <!-- ★追加: 自分の投稿のみ表示トグル -->
-                    <div class="setting-item" style="margin-bottom: 1rem;">
-                        <label for="show-my-uploads-only" class="toggle-switch-label">
-                            <span>自分の投稿のみ表示する</span>
-                            <input type="checkbox" id="show-my-uploads-only" class="toggle-switch">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
                     <div id="r2-gallery-container">
                          <p>「一覧を更新」ボタンを押して、保存済みの音声を表示します。</p>
-                    </div>
-                    <!-- ★追加: ページネーションコントロール -->
-                    <div id="r2-pagination-controls">
-                        <button id="r2-prev-page-btn" class="icon-btn" title="前のページへ">◀</button>
-                        <span id="r2-page-info"></span>
-                        <button id="r2-next-page-btn" class="icon-btn" title="次のページへ">▶</button>
                     </div>
                 </div>
             </div>
             
-            <!-- 背景設定タブ (変更なし) -->
             <div id="tab-background" class="tab-content">
                  <div class="setting-item"> <label for="model-select-bg">設定対象の音声モデル:</label><select id="model-select-bg"></select> </div> <div id="settings-area"> <div class="setting-item"><label for="display-name-input">現在のモデルの表示名:</label><div class="display-name-editor"><input type="text" id="display-name-input" placeholder="表示名を入力"><button id="save-display-name-btn">保存</button></div></div> <div class="setting-item"> <label>画像ギャラリー (現在のモデル用):</label> <div id="gallery-container"></div> <button id="upload-image-btn">ファイルから選択 (画像/ZIP)</button> <input type="file" id="image-upload-input" accept="image/*,application/zip,application/x-zip-compressed" style="display: none;"> </div> <div id="image-adjust-panel"> <div class="setting-item"> <label for="bg-adjust-toggle" class="toggle-switch-label"> <span>背景のインタラクティブ調整</span> <input type="checkbox" id="bg-adjust-toggle" class="toggle-switch"> <span class="toggle-slider"></span> </label> </div> </div> </div>
             </div>
-
-            <!-- UI/データ管理タブ (変更なし) -->
             <div id="tab-ui" class="tab-content">
                 <p style="font-size: 0.9em; color: #666; margin-top: 0; margin-bottom: 1.5rem;">UIコンテナ上部をドラッグして位置を調整できます。</p> <div class="setting-item"><label for="format-select">音声フォーマット:</label><select id="format-select"><option value="mp3" selected>MP3</option><option value="wav">WAV</option><option value="flac">FLAC</option><option value="opus">Opus</option></select></div> <div class="setting-item"><label>UIコンテナの横幅 (px)</label><div class="slider-container"><input type="range" id="ui-width-slider" min="500" max="1200" step="10"><input type="number" id="ui-width-input"></div></div> <div class="setting-item"><label>UIコンテナの透過度</label><div class="slider-container"><input type="range" id="ui-opacity-slider" min="0.5" max="1" step="0.01"><input type="number" id="ui-opacity-input"></div></div> <div class="setting-item"><button id="export-all-settings-btn" class="btn-reset btn-info">全設定をZIPでエクスポート</button></div> <div class="setting-item"><button id="reset-ui-btn" class="btn-reset">UI設定をデフォルトに戻す</button></div> <div class="setting-item"><button id="reset-all-bgs-btn" class="btn-reset btn-danger">全てのモデルの背景・表示名をリセット</button></div>
             </div>
@@ -296,367 +262,8 @@
         <button id="apply-bg-changes-btn" class="btn-reset" style="margin-top: 0; background-color: var(--success-color);">この設定を適用</button>
     </div>
 
-    <script>
-    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    // ★              認証ロジック (auth.js相当)             ★
-    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    const firebaseConfig = {
-        // ここにあなたのFirebaseプロジェクトの設定を貼り付けてください
-        // 例:
-        // apiKey: "AIzaSy...",
-        // authDomain: "your-project-id.firebaseapp.com",
-        // projectId: "your-project-id",
-        // storageBucket: "your-project-id.appspot.com",
-        // messagingSenderId: "...",
-        // appId: "..."
-    };
-    
-    firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-    const provider = new firebase.auth.GoogleAuthProvider();
-    
-    let currentUser = null;
-    let idToken = null;
-    
-    const loginBtn = document.getElementById('login-btn');
-    const logoutBtn = document.getElementById('logout-btn');
-    const userDisplayWrapper = document.getElementById('user-display-wrapper');
-    const userInfoSpan = document.getElementById('user-info');
-    const editUsernameBtn = document.getElementById('edit-username-btn');
-    
-    function updateUIForAuthState(user) {
-        currentUser = user;
-        const r2GalleryTab = document.querySelector('.tab-button[data-tab="r2-gallery"]');
-        const r2GalleryWrapper = document.getElementById('r2-gallery-wrapper');
-        const showMyUploadsToggle = document.getElementById('show-my-uploads-only').parentNode; // label
-    
-        if (user) {
-            userDisplayWrapper.style.display = 'flex';
-            const displayName = user.displayName || '名無しさん';
-            userInfoSpan.textContent = displayName;
-            userInfoSpan.title = user.email;
-            loginBtn.style.display = 'none';
-            logoutBtn.style.display = 'block';
-    
-            // ログイン時、ロックを解除
-            r2GalleryTab.classList.remove('locked-feature');
-            r2GalleryWrapper.classList.remove('locked-feature');
-            showMyUploadsToggle.style.display = 'flex'; // 「自分の投稿のみ」を表示
-    
-            user.getIdToken().then(token => {
-                idToken = token;
-            });
-        } else {
-            userDisplayWrapper.style.display = 'none';
-            loginBtn.style.display = 'block';
-            logoutBtn.style.display = 'none';
-            idToken = null;
-    
-            // ログアウト時、ロック
-            r2GalleryTab.classList.add('locked-feature');
-            r2GalleryWrapper.classList.add('locked-feature');
-            showMyUploadsToggle.style.display = 'none'; // 「自分の投稿のみ」を非表示
-            document.getElementById('show-my-uploads-only').checked = false;
-        }
-    }
-    
-    auth.onAuthStateChanged(user => {
-        updateUIForAuthState(user);
-        // 認証状態が変わったらギャラリーを再読み込み
-        if (document.querySelector('.tab-button[data-tab="r2-gallery"].active')) {
-            refreshR2Gallery(true);
-        }
-    });
-    
-    loginBtn.addEventListener('click', () => {
-        auth.signInWithPopup(provider)
-            .catch(error => {
-                console.error("Login failed:", error);
-                alert(`ログインに失敗しました: ${error.message}`);
-            });
-    });
-    
-    logoutBtn.addEventListener('click', () => {
-        auth.signOut();
-    });
-    
-    editUsernameBtn.addEventListener('click', async () => {
-        if (!currentUser) return;
-    
-        let newDisplayName = null;
-        let isValid = false;
-        const currentName = currentUser.displayName || '名無しさん';
-    
-        // ★★★ ユーザー名10文字制限のロジック ★★★
-        while (!isValid) {
-            newDisplayName = prompt('新しい表示名を入力してください (10文字以内):', currentName);
-    
-            if (newDisplayName === null) {
-                return; 
-            }
-            if (newDisplayName.trim() === '') {
-                alert('表示名は空にできません。');
-            } else if (newDisplayName.length > 10) {
-                alert('表示名は10文字以内で入力してください。');
-            } else {
-                isValid = true;
-            }
-        }
-    
-        try {
-            await currentUser.updateProfile({
-                displayName: newDisplayName
-            });
-            updateUIForAuthState(auth.currentUser); // UIを更新
-            alert('表示名を更新しました。');
-        } catch (error) {
-            console.error('Error updating display name:', error);
-            alert(`表示名の更新に失敗しました: ${error.message}`);
-        }
-    });
+    <script src="auth.js"></script>
+    <script src="script.js"></script>
 
-    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    // ★              メインロジック (script.js相当)           ★
-    // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-    
-    document.addEventListener('DOMContentLoaded', () => {
-        // 状態変数
-        let r2GalleryCurrentPage = 1;
-        let r2GalleryDebounceTimer;
-
-        // --- 初期化処理 ---
-        function initApp() {
-            // イベントリスナーをここに集約
-            setupEventListeners();
-            loadModels();
-            // ... 他の初期化処理
-        }
-
-        // --- イベントリスナー設定 ---
-        function setupEventListeners() {
-            // タブ切り替え
-            document.querySelector('.tab-navigation').addEventListener('click', (e) => {
-                if (e.target.classList.contains('tab-button') && !e.target.classList.contains('locked-feature')) {
-                    const tabId = e.target.dataset.tab;
-                    switchTab(tabId);
-                }
-            });
-
-            // 音声生成ボタン
-            document.getElementById('generate-btn').addEventListener('click', handleGenerateClick);
-
-            // R2ギャラリー関連
-            document.getElementById('refresh-r2-gallery-btn').addEventListener('click', () => refreshR2Gallery(true));
-            document.getElementById('r2-search-model-select').addEventListener('change', () => refreshR2Gallery(true));
-            document.getElementById('r2-search-text-input').addEventListener('input', () => {
-                clearTimeout(r2GalleryDebounceTimer);
-                r2GalleryDebounceTimer = setTimeout(() => refreshR2Gallery(true), 500);
-            });
-            document.getElementById('show-my-uploads-only').addEventListener('change', () => refreshR2Gallery(true));
-
-            // ★ページネーションボタン
-            document.getElementById('r2-prev-page-btn').addEventListener('click', () => {
-                if (r2GalleryCurrentPage > 1) {
-                    r2GalleryCurrentPage--;
-                    refreshR2Gallery();
-                }
-            });
-            document.getElementById('r2-next-page-btn').addEventListener('click', () => {
-                r2GalleryCurrentPage++;
-                refreshR2Gallery();
-            });
-
-            // ... 他のイベントリスナー
-        }
-
-        // --- タブ切り替えロジック ---
-        function switchTab(tabId) {
-            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-            document.querySelector(`.tab-button[data-tab="${tabId}"]`).classList.add('active');
-            document.getElementById(`tab-${tabId}`).classList.add('active');
-
-            if (tabId === 'r2-gallery' && document.getElementById('r2-gallery-container').innerHTML.includes('ボタンを押して')) {
-                refreshR2Gallery(true);
-            }
-        }
-
-        // --- モデル読み込み ---
-        async function loadModels() {
-            try {
-                const response = await fetch('/get-models');
-                const models = await response.json();
-                const selects = document.querySelectorAll('#model-select-tts, #model-select-bg, #r2-search-model-select');
-                selects.forEach(select => {
-                    if (select.id !== 'r2-search-model-select') {
-                        select.innerHTML = '';
-                    }
-                    models.forEach(model => {
-                        const option = new Option(model.name, model.id);
-                        select.add(option.cloneNode(true));
-                    });
-                });
-            } catch (error) {
-                console.error("Failed to load models:", error);
-            }
-        }
-        
-        // --- 音声生成処理 (変更なし) ---
-        async function handleGenerateClick() { /* ... 既存のコード ... */ }
-
-
-        // ★★★★★ R2ギャラリー関連の関数 (大幅変更) ★★★★★
-        
-        // R2ギャラリーを更新するメイン関数
-        async function refreshR2Gallery(resetPage = false) {
-            if (resetPage) {
-                r2GalleryCurrentPage = 1;
-            }
-        
-            const r2GalleryContainer = document.getElementById('r2-gallery-container');
-            const refreshBtn = document.getElementById('refresh-r2-gallery-btn');
-            const paginationControls = document.getElementById('r2-pagination-controls');
-        
-            r2GalleryContainer.innerHTML = '<p>読み込み中...</p>';
-            refreshBtn.disabled = true;
-            paginationControls.style.display = 'none';
-        
-            const modelFilter = document.getElementById('r2-search-model-select').value;
-            const textFilter = document.getElementById('r2-search-text-input').value;
-            const showMyUploadsOnly = document.getElementById('show-my-uploads-only').checked;
-        
-            try {
-                const url = new URL('/api/list', window.location.origin);
-                url.searchParams.append('page', r2GalleryCurrentPage);
-                if (modelFilter) url.searchParams.append('model', modelFilter);
-                if (textFilter) url.searchParams.append('text', textFilter);
-        
-                const response = await fetch(url.toString());
-                if (!response.ok) throw new Error('Failed to fetch gallery list');
-        
-                const data = await response.json();
-        
-                // ★ 「自分の投稿のみ」でフロントエンド側でフィルタリング
-                let filesToDisplay = data.items;
-                let totalItemsForPagination = data.totalItems;
-
-                if (showMyUploadsOnly && currentUser && currentUser.uid) {
-                    filesToDisplay = data.items.filter(file => file.user_id === currentUser.uid);
-                    // 注意: ページネーション表示はバックエンドから返された総数に依存するため、
-                    // フロントでのフィルタリングは表示件数が少なくなる場合があります。
-                    // 厳密なページネーションを実装するには、このフィルタ条件もバックエンドに送るのが理想です。
-                }
-
-                displayR2Gallery(filesToDisplay);
-                updatePaginationControls(totalItemsForPagination, data.pageSize);
-        
-            } catch (error) {
-                console.error("Error refreshing R2 gallery:", error);
-                r2GalleryContainer.innerHTML = `<p style="color: red;">一覧の読み込みに失敗しました: ${error.message}</p>`;
-            } finally {
-                refreshBtn.disabled = false;
-            }
-        }
-        
-        // ギャラリーの描画関数
-        function displayR2Gallery(files) {
-            const r2GalleryContainer = document.getElementById('r2-gallery-container');
-            r2GalleryContainer.innerHTML = '';
-            if (files.length === 0) {
-                r2GalleryContainer.innerHTML = '<p>該当する音声ファイルが見つかりません。</p>';
-                return;
-            }
-            files.forEach(file => {
-                const card = createR2PlayerCard(file);
-                r2GalleryContainer.appendChild(card);
-            });
-        }
-
-        // R2プレイヤーカード作成
-        function createR2PlayerCard(file) {
-            const card = document.createElement('div');
-            card.className = 'player-card';
-            card.dataset.key = file.r2_key;
-
-            const audioSrc = `/api/get/${encodeURIComponent(file.r2_key)}`;
-
-            // 本人確認
-            const isOwner = currentUser && currentUser.uid === file.user_id;
-
-            card.innerHTML = `
-                <div class="card-main">
-                    <p><strong>モデル:</strong> ${file.model_name.split('/').pop()}</p>
-                    <p><strong>テキスト:</strong> ${file.text_content}</p>
-                    <audio controls src="${audioSrc}"></audio>
-                    <small>投稿日時: ${new Date(file.created_at).toLocaleString()}</small>
-                </div>
-                <div class="card-actions-wrapper">
-                    <div class="player-actions">
-                        ${isOwner ? `<button class="btn-delete-r2 icon-btn" title="削除">🗑️</button>` : ''}
-                    </div>
-                </div>
-            `;
-
-            if (isOwner) {
-                card.querySelector('.btn-delete-r2').addEventListener('click', async (e) => {
-                    e.target.disabled = true;
-                    if (confirm('この音声を完全に削除しますか？')) {
-                        await deleteFromR2(file.r2_key);
-                    } else {
-                        e.target.disabled = false;
-                    }
-                });
-            }
-            return card;
-        }
-
-        // R2から削除する処理
-        async function deleteFromR2(key) {
-            if (!idToken) {
-                alert('削除するにはログインが必要です。');
-                return;
-            }
-            try {
-                const response = await fetch(`/api/delete/${encodeURIComponent(key)}`, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${idToken}` }
-                });
-                if (!response.ok) throw new Error('Delete failed');
-                document.querySelector(`.player-card[data-key="${key}"]`).remove();
-                alert('削除しました。');
-            } catch (error) {
-                console.error("Error deleting from R2:", error);
-                alert('削除に失敗しました。');
-            }
-        }
-        
-        // ★ページネーションUIを更新する関数
-        function updatePaginationControls(totalItems, pageSize) {
-            const paginationControls = document.getElementById('r2-pagination-controls');
-            const pageInfo = document.getElementById('r2-page-info');
-            const prevBtn = document.getElementById('r2-prev-page-btn');
-            const nextBtn = document.getElementById('r2-next-page-btn');
-        
-            if (totalItems <= pageSize && r2GalleryCurrentPage === 1) {
-                paginationControls.style.display = 'none';
-                return;
-            }
-        
-            paginationControls.style.display = 'flex';
-        
-            const totalPages = Math.ceil(totalItems / pageSize);
-            pageInfo.textContent = `ページ ${r2GalleryCurrentPage} / ${totalPages || 1}`;
-        
-            prevBtn.disabled = r2GalleryCurrentPage <= 1;
-            nextBtn.disabled = r2GalleryCurrentPage >= totalPages;
-        }
-
-        // アプリケーションを初期化
-        initApp();
-    });
-
-    // ここに、音声生成(`handleGenerateClick`)やUI設定など、変更のない他のJavaScript関数を配置します。
-    // 長くなるため、主要な変更点のみを詳細に記述しました。
-    </script>
 </body>
 </html>
