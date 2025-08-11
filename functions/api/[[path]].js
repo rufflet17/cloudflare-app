@@ -92,30 +92,31 @@ function str2ab(str) {
 
 
 // --- APIハンドラー ---
-export async function onRequest(context) {
-  const { request, env } = context;
-  const url = new URL(request.url);
-  const path = url.pathname;
-  const method = request.method;
+export default {
+    async fetch(request, env, context) {
+        const url = new URL(request.url);
+        const path = url.pathname;
+        const method = request.method;
 
-  // ルーティング
-  if (path === "/get-models" && method === "GET") {
-    return handleGetModels(context);
-  }
-  if (path === "/synthesize" && method === "POST") {
-    return handleSynthesize(context);
-  }
-  // /api/ で始まるパスはすべて handleApiRoutes で処理
-  if (path.startsWith("/api/")) {
-    return handleApiRoutes(context);
-  }
+        // ルーティング
+        if (path === "/get-models" && method === "GET") {
+            return handleGetModels({ env });
+        }
+        if (path === "/synthesize" && method === "POST") {
+            return handleSynthesize({ request, env });
+        }
+        if (path.startsWith("/api/")) {
+            return handleApiRoutes({ request, env });
+        }
 
-  // マッチしない場合は次の処理（静的アセットの配信など）へ
-  return context.next();
+        // ここにPagesプラグインの静的アセット配信など、他の処理が入る想定
+        // 例: return env.ASSETS.fetch(request);
+        return new Response("Not Found", { status: 404 });
+    }
 }
 
-// --- /get-models ハンドラー ---
-// (このセクションは変更ありません)
+
+// --- /get-models ハンドラー (変更なし) ---
 async function handleGetModels({ env }) {
   try {
     const response = await fetch(
@@ -148,8 +149,7 @@ async function handleGetModels({ env }) {
   }
 }
 
-// --- /synthesize ハンドラー ---
-// (このセクションは変更ありません)
+// --- /synthesize ハンドラー (変更なし) ---
 async function handleSynthesize({ request, env }) {
   try {
     const { model_id, texts, style_id, style_strength, format } = await request.json();
@@ -203,59 +203,49 @@ async function handleSynthesize({ request, env }) {
   }
 }
 
-
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-// ★ 修正点: 認証を操作によって切り替えるように変更 ★
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-async function handleApiRoutes(context) {
-    const { request, env } = context;
+// ★★★★★ 変更点: 認証をオプショナルに変更 ★★★★★
+async function handleApiRoutes({ request, env }) {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
 
-    let user = null; // 認証されたユーザー情報を格納する変数
+    let user = null;
 
-    // 保護されたルート（投稿、削除）かどうかを判定
+    // ヘッダーからトークンを取得し、存在すれば検証を試みる (オプショナル認証)
+    const authHeader = request.headers.get('Authorization');
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        const decodedToken = await verifyFirebaseToken(token, env);
+        if (decodedToken) {
+            user = { uid: decodedToken.sub };
+        }
+    }
+
+    // 保護されたルート（投稿、削除）の定義
     const isProtectedRoute = 
         (path === '/api/upload' && method === 'POST') ||
         (path.startsWith('/api/delete/') && method === 'DELETE');
 
-    // 保護されたルートの場合のみ、認証処理を実行
-    if (isProtectedRoute) {
-        const authHeader = request.headers.get('Authorization');
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            return new Response(JSON.stringify({ error: "Unauthorized: Missing token" }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-        }
-        
-        const token = authHeader.substring(7);
-        const decodedToken = await verifyFirebaseToken(token, env);
-
-        if (!decodedToken) {
-            return new Response(JSON.stringify({ error: "Unauthorized: Invalid token" }), { status: 403, headers: { 'Content-Type': 'application/json' } });
-        }
-        
-        // 検証成功！ユーザー情報を取得
-        user = { uid: decodedToken.sub };
+    // 保護されたルートで認証情報がない場合はエラーを返す
+    if (isProtectedRoute && !user) {
+        return new Response(JSON.stringify({ error: "Unauthorized: Valid token required for this operation." }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
 
     // --- ルーティング ---
-    
-    // 保護されたルート
     if (path === '/api/upload' && method === 'POST') {
-        return handleUpload(request, env, user); // 認証済みのuserオブジェクトを渡す
+        return handleUpload(request, env, user);
     }
     if (path.startsWith('/api/delete/') && method === 'DELETE') {
         const key = url.pathname.substring('/api/delete/'.length);
-        return handleDelete(request, env, user, key); // 認証済みのuserオブジェクトを渡す
+        return handleDelete(request, env, user, key);
     }
-
-    // 公開ルート
     if (path === '/api/list' && method === 'GET') {
-        return handleList(request, env); // userオブジェクトは渡さない
+        // userオブジェクトを渡す（ログインしていれば情報が、していなければnullが入る）
+        return handleList(request, env, user);
     }
     if (path.startsWith('/api/get/') && method === 'GET') {
         const key = url.pathname.substring('/api/get/'.length);
-        return handleGet(request, env, key); // userオブジェクトは渡さない
+        return handleGet(request, env, key);
     }
 
     return new Response("API Route Not Found", { status: 404 });
@@ -302,16 +292,63 @@ async function handleUpload(request, env, user) {
     }
 }
 
-// ★ 修正点: 誰でも一覧を閲覧できるように変更
-async function handleList(request, env) {
+// ★★★★★ 変更点: ページネーション、フィルタリング、検索機能を追加 ★★★★★
+async function handleList(request, env, user) {
     try {
-        // WHERE句を削除して全ユーザーのデータを取得
-        // user_idもSELECTに加えて、誰の投稿かフロントで判別できるようにする
-        const { results } = await env.MY_D1_DATABASE.prepare(
-            "SELECT r2_key, user_id, model_name, text_content, created_at FROM audios ORDER BY created_at DESC"
-        ).all();
+        const url = new URL(request.url);
+        const params = url.searchParams;
 
-        return new Response(JSON.stringify(results || []), {
+        // ページネーションパラメータ
+        const page = parseInt(params.get('page') || '1', 10);
+        const limit = 10; // 1ページあたり10件に固定
+        const offset = (page - 1) * limit;
+
+        // フィルター/検索パラメータ
+        const myUploads = params.get('myUploads') === 'true';
+        const searchModel = params.get('model');
+        const searchText = params.get('text');
+
+        let whereClauses = [];
+        let bindings = [];
+
+        // "自分の投稿のみ" フィルター (ログインしている場合のみ有効)
+        if (myUploads && user) {
+            whereClauses.push("user_id = ?");
+            bindings.push(user.uid);
+        }
+
+        // モデル名検索フィルター
+        if (searchModel) {
+            whereClauses.push("model_name = ?");
+            bindings.push(searchModel);
+        }
+
+        // テキスト検索フィルター
+        if (searchText) {
+            whereClauses.push("text_content LIKE ?");
+            bindings.push(`%${searchText}%`);
+        }
+        
+        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+        // 総件数を取得
+        const countQuery = `SELECT COUNT(*) as total FROM audios ${whereString}`;
+        const totalStmt = env.MY_D1_DATABASE.prepare(countQuery).bind(...bindings);
+        const totalResult = await totalStmt.first();
+        const totalItems = totalResult ? totalResult.total : 0;
+        const totalPages = Math.ceil(totalItems / limit);
+
+        // 指定ページのデータを取得
+        const dataQuery = `SELECT r2_key, user_id, model_name, text_content, created_at FROM audios ${whereString} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+        const dataBindings = [...bindings, limit, offset];
+        const dataStmt = env.MY_D1_DATABASE.prepare(dataQuery).bind(...dataBindings);
+        const { results: data } = await dataStmt.all();
+
+        return new Response(JSON.stringify({
+            data: data || [],
+            totalPages: totalPages,
+            currentPage: page
+        }), {
             headers: { "Content-Type": "application/json" },
         });
 
@@ -321,22 +358,19 @@ async function handleList(request, env) {
     }
 }
 
-// ★ 修正点: 誰でも音声を取得できるように変更
+// --- /api/get/[key] ハンドラー (変更なし) ---
 async function handleGet(request, env, key) {
     try {
         const decodedKey = decodeURIComponent(key);
         
-        // user_idによる絞り込みを削除
+        // メタデータ存在確認 (誰でもアクセス可能)
         const stmt = env.MY_D1_DATABASE.prepare("SELECT id FROM audios WHERE r2_key = ?");
         const { results } = await stmt.bind(decodedKey).all();
-
-        // データベースにメタデータが存在しない場合はファイルなしと判断
         if (!results || results.length === 0) {
-            return new Response("File not found.", { status: 404 });
+            return new Response("File metadata not found.", { status: 404 });
         }
         
         const object = await env.MY_R2_BUCKET.get(decodedKey);
-
         if (object === null) {
             return new Response("Object Not Found in R2", { status: 404 });
         }
@@ -344,7 +378,6 @@ async function handleGet(request, env, key) {
         const headers = new Headers();
         object.writeHttpMetadata(headers);
         headers.set("etag", object.httpEtag);
-
         return new Response(object.body, { headers });
 
     } catch (error) {
@@ -358,7 +391,7 @@ async function handleDelete(request, env, user, key) {
     try {
         const decodedKey = decodeURIComponent(key);
 
-        // user_idでの絞り込みは残し、本人しか削除できないようにする
+        // 本人の投稿しか削除できないように user_id で絞り込む
         const stmt = env.MY_D1_DATABASE.prepare("DELETE FROM audios WHERE r2_key = ? AND user_id = ? RETURNING id");
         const { results } = await stmt.bind(decodedKey, user.uid).all();
 
@@ -367,7 +400,6 @@ async function handleDelete(request, env, user, key) {
         }
         
         await env.MY_R2_BUCKET.delete(decodedKey);
-
         return new Response(JSON.stringify({ success: true, key: decodedKey }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
     } catch (error) {
