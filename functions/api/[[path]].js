@@ -114,8 +114,7 @@ export async function onRequest(context) {
   return context.next();
 }
 
-// --- /get-models ハンドラー ---
-// (このセクションは変更ありません)
+// --- /get-models ハンドラー (変更なし) ---
 async function handleGetModels({ env }) {
   try {
     const response = await fetch(
@@ -128,7 +127,6 @@ async function handleGetModels({ env }) {
     );
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Failed to fetch models from Cloudflare API:", errorText);
       throw new Error(`Cloudflare API error: ${response.status} ${response.statusText}`);
     }
     const data = await response.json();
@@ -148,16 +146,13 @@ async function handleGetModels({ env }) {
   }
 }
 
-// --- /synthesize ハンドラー ---
-// (このセクションは変更ありません)
+// --- /synthesize ハンドラー (変更なし) ---
 async function handleSynthesize({ request, env }) {
   try {
     const { model_id, texts, style_id, style_strength, format } = await request.json();
-
     if (!model_id || !texts || !Array.isArray(texts)) {
         return new Response(JSON.stringify({ error: "Missing required parameters: model_id, texts (array)." }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
-    
     const results = [];
     for (const text of texts) {
         try {
@@ -166,61 +161,35 @@ async function handleSynthesize({ request, env }) {
                 inputs.speaker = style_id.toString();
                 inputs.style_strength = style_strength;
             }
-
             const response = await env.AI.run(model_id, inputs);
-
             const arrayBuffer = await new Response(response).arrayBuffer();
             const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-            
             const contentType = `audio/${format}`;
-
-            results.push({
-                status: 'success',
-                text: text,
-                audio_base_64: base64,
-                content_type: contentType
-            });
-
+            results.push({ status: 'success', text: text, audio_base_64: base64, content_type: contentType });
         } catch (e) {
-            console.error(`Error synthesizing text: "${text}"`, e);
-            results.push({
-                status: 'error',
-                text: text,
-                reason: e.message || 'Unknown synthesis error'
-            });
+            results.push({ status: 'error', text: text, reason: e.message || 'Unknown synthesis error' });
         }
     }
-    
-    return new Response(JSON.stringify(results), {
-        headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response(JSON.stringify(results), { headers: { 'Content-Type': 'application/json' } });
   } catch (error) {
-    console.error("Error in handleSynthesize:", error);
-    return new Response(JSON.stringify({ error: "Failed to synthesize audio." }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({ error: "Failed to synthesize audio." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
 
 
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-// ★ 修正点: 認証を操作によって切り替えるように変更 ★
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+// --- APIルーティング (変更なし) ---
 async function handleApiRoutes(context) {
     const { request, env } = context;
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
 
-    let user = null; // 認証されたユーザー情報を格納する変数
+    let user = null; 
 
-    // 保護されたルート（投稿、削除）かどうかを判定
     const isProtectedRoute = 
         (path === '/api/upload' && method === 'POST') ||
         (path.startsWith('/api/delete/') && method === 'DELETE');
 
-    // 保護されたルートの場合のみ、認証処理を実行
     if (isProtectedRoute) {
         const authHeader = request.headers.get('Authorization');
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -233,29 +202,22 @@ async function handleApiRoutes(context) {
         if (!decodedToken) {
             return new Response(JSON.stringify({ error: "Unauthorized: Invalid token" }), { status: 403, headers: { 'Content-Type': 'application/json' } });
         }
-        
-        // 検証成功！ユーザー情報を取得
         user = { uid: decodedToken.sub };
     }
 
-    // --- ルーティング ---
-    
-    // 保護されたルート
     if (path === '/api/upload' && method === 'POST') {
-        return handleUpload(request, env, user); // 認証済みのuserオブジェクトを渡す
+        return handleUpload(request, env, user);
     }
     if (path.startsWith('/api/delete/') && method === 'DELETE') {
         const key = url.pathname.substring('/api/delete/'.length);
-        return handleDelete(request, env, user, key); // 認証済みのuserオブジェクトを渡す
+        return handleDelete(request, env, user, key);
     }
-
-    // 公開ルート
     if (path === '/api/list' && method === 'GET') {
-        return handleList(request, env); // userオブジェクトは渡さない
+        return handleList(request, env);
     }
     if (path.startsWith('/api/get/') && method === 'GET') {
         const key = url.pathname.substring('/api/get/'.length);
-        return handleGet(request, env, key); // userオブジェクトは渡さない
+        return handleGet(request, env, key);
     }
 
     return new Response("API Route Not Found", { status: 404 });
@@ -266,90 +228,111 @@ async function handleUpload(request, env, user) {
     try {
         const { modelId, text, audioBase64, contentType } = await request.json();
         if (!modelId || !text || !audioBase64 || !contentType) {
-            return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+            return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
         }
-        
         const audioData = atob(audioBase64);
         const arrayBuffer = new Uint8Array(audioData.length);
         for (let i = 0; i < audioData.length; i++) {
             arrayBuffer[i] = audioData.charCodeAt(i);
         }
-
         const extension = contentType.split('/')[1] || 'bin';
         const r2Key = `${user.uid}/${crypto.randomUUID()}.${extension}`;
-        
-        await env.MY_R2_BUCKET.put(r2Key, arrayBuffer, {
-            httpMetadata: { contentType },
-        });
-
+        await env.MY_R2_BUCKET.put(r2Key, arrayBuffer, { httpMetadata: { contentType } });
         const d1Key = crypto.randomUUID();
         const createdAt = new Date().toISOString();
-        
         const { success } = await env.MY_D1_DATABASE.prepare(
             `INSERT INTO audios (id, r2_key, user_id, model_name, text_content, created_at) VALUES (?, ?, ?, ?, ?, ?)`
         ).bind(d1Key, r2Key, user.uid, modelId, text, createdAt).run();
-
         if (!success) {
             await env.MY_R2_BUCKET.delete(r2Key);
             throw new Error("Failed to write metadata to D1.");
         }
-
-        return new Response(JSON.stringify({ success: true, key: r2Key }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-
+        return new Response(JSON.stringify({ success: true, key: r2Key }), { status: 200 });
     } catch (error) {
-        console.error("Upload failed:", error);
-        return new Response(JSON.stringify({ error: "Upload failed." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ error: "Upload failed." }), { status: 500 });
     }
 }
 
-// ★ 修正点: 誰でも一覧を閲覧できるように変更
+
+// ★★★ /api/list ハンドラー (ページネーションと検索機能を追加) ★★★
 async function handleList(request, env) {
     try {
-        // WHERE句を削除して全ユーザーのデータを取得
-        // user_idもSELECTに加えて、誰の投稿かフロントで判別できるようにする
-        const { results } = await env.MY_D1_DATABASE.prepare(
-            "SELECT r2_key, user_id, model_name, text_content, created_at FROM audios ORDER BY created_at DESC"
-        ).all();
+        const url = new URL(request.url);
+        const params = url.searchParams;
+        
+        const page = parseInt(params.get("page") || "1", 10);
+        const modelFilter = params.get("model") || "";
+        const textFilter = params.get("text") || "";
+        
+        const pageSize = 10; // 1ページあたりのアイテム数
+        const offset = (page - 1) * pageSize;
 
-        return new Response(JSON.stringify(results || []), {
+        let whereClauses = [];
+        let bindings = [];
+
+        if (modelFilter) {
+            whereClauses.push("model_name = ?");
+            bindings.push(modelFilter);
+        }
+        if (textFilter) {
+            whereClauses.push("text_content LIKE ?");
+            bindings.push(`%${textFilter}%`);
+        }
+
+        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+        // 総アイテム数を取得
+        const countStmt = env.MY_D1_DATABASE.prepare(
+            `SELECT COUNT(*) as total FROM audios ${whereString}`
+        ).bind(...bindings);
+        const countResult = await countStmt.first();
+        const totalItems = countResult ? countResult.total : 0;
+
+        // 指定ページのデータを取得
+        const dataStmt = env.MY_D1_DATABASE.prepare(
+            `SELECT r2_key, user_id, model_name, text_content, created_at FROM audios 
+             ${whereString} 
+             ORDER BY created_at DESC 
+             LIMIT ? OFFSET ?`
+        ).bind(...bindings, pageSize, offset);
+        
+        const { results } = await dataStmt.all();
+
+        return new Response(JSON.stringify({
+            items: results || [],
+            totalItems: totalItems,
+            currentPage: page,
+            pageSize: pageSize
+        }), {
             headers: { "Content-Type": "application/json" },
         });
 
     } catch (error) {
         console.error("List failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to list audio files." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ error: "Failed to list audio files." }), { status: 500 });
     }
 }
 
-// ★ 修正点: 誰でも音声を取得できるように変更
+
+// --- /api/get/[key] ハンドラー (変更なし) ---
 async function handleGet(request, env, key) {
     try {
         const decodedKey = decodeURIComponent(key);
-        
-        // user_idによる絞り込みを削除
         const stmt = env.MY_D1_DATABASE.prepare("SELECT id FROM audios WHERE r2_key = ?");
         const { results } = await stmt.bind(decodedKey).all();
-
-        // データベースにメタデータが存在しない場合はファイルなしと判断
         if (!results || results.length === 0) {
-            return new Response("File not found.", { status: 404 });
+            return new Response("File not found in metadata.", { status: 404 });
         }
-        
         const object = await env.MY_R2_BUCKET.get(decodedKey);
-
         if (object === null) {
             return new Response("Object Not Found in R2", { status: 404 });
         }
-
         const headers = new Headers();
         object.writeHttpMetadata(headers);
         headers.set("etag", object.httpEtag);
-
         return new Response(object.body, { headers });
-
     } catch (error) {
-        console.error("Get failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to get audio file." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ error: "Failed to get audio file." }), { status: 500 });
     }
 }
 
@@ -357,21 +340,14 @@ async function handleGet(request, env, key) {
 async function handleDelete(request, env, user, key) {
     try {
         const decodedKey = decodeURIComponent(key);
-
-        // user_idでの絞り込みは残し、本人しか削除できないようにする
         const stmt = env.MY_D1_DATABASE.prepare("DELETE FROM audios WHERE r2_key = ? AND user_id = ? RETURNING id");
         const { results } = await stmt.bind(decodedKey, user.uid).all();
-
         if (!results || results.length === 0) {
-            return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+            return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404 });
         }
-        
         await env.MY_R2_BUCKET.delete(decodedKey);
-
-        return new Response(JSON.stringify({ success: true, key: decodedKey }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-
+        return new Response(JSON.stringify({ success: true, key: decodedKey }), { status: 200 });
     } catch (error) {
-        console.error("Delete failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to delete audio file." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ error: "Failed to delete audio file." }), { status: 500 });
     }
 }
