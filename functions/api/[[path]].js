@@ -244,11 +244,24 @@ async function handleApiRoutes(context) {
 }
 
 async function handleUpload(request, env, user) {
-    if (!user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
+    if (!user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { 'Content-Type': 'application/json' }});
+
     try {
+        // ★★★★★ ブロックチェック処理を追加 ★★★★★
+        const stmt = env.MY_D1_DATABASE.prepare(
+            `SELECT is_blocked FROM user_status WHERE user_id = ?`
+        );
+        const userStatus = await stmt.bind(user.uid).first();
+
+        if (userStatus && userStatus.is_blocked === 1) {
+            return new Response(JSON.stringify({ error: "あなたのアカウントは投稿が制限されています。" }), { status: 403, headers: { 'Content-Type': 'application/json' }});
+        }
+        // ★★★★★ ここまで追加 ★★★★★
+
+        // --- これ以降は既存のアップロード処理 ---
         const { modelId, text, audioBase64, contentType } = await request.json();
         if (!modelId || !text || !audioBase64 || !contentType) {
-            return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
+            return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400, headers: { 'Content-Type': 'application/json' }});
         }
         
         const audioData = atob(audioBase64);
@@ -274,10 +287,10 @@ async function handleUpload(request, env, user) {
             throw new Error("Failed to write metadata to D1.");
         }
 
-        return new Response(JSON.stringify({ success: true, key: r2Key }), { status: 200 });
+        return new Response(JSON.stringify({ success: true, key: r2Key }), { status: 200, headers: { 'Content-Type': 'application/json' }});
     } catch (error) {
         console.error("Upload failed:", error);
-        return new Response(JSON.stringify({ error: "Upload failed." }), { status: 500 });
+        return new Response(JSON.stringify({ error: "Upload failed." }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
 
@@ -303,7 +316,7 @@ async function handleList(request, env, user) {
             bindings.push(userId);
         } else if (filter === 'mine') {
             if (!user || !user.uid) {
-                return new Response(JSON.stringify({ error: "このフィルターには認証が必要です。" }), { status: 401 });
+                return new Response(JSON.stringify({ error: "このフィルターには認証が必要です。" }), { status: 401, headers: { 'Content-Type': 'application/json' }});
             }
             conditions.push("user_id = ?");
             bindings.push(user.uid);
@@ -338,7 +351,7 @@ async function handleList(request, env, user) {
 
     } catch (error) {
         console.error("List failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to list audio files." }), { status: 500 });
+        return new Response(JSON.stringify({ error: "Failed to list audio files." }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
 
@@ -354,25 +367,25 @@ async function handleGet(request, env, key) {
         return new Response(object.body, { headers });
     } catch (error) {
         console.error("Get failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to get audio file." }), { status: 500 });
+        return new Response(JSON.stringify({ error: "Failed to get audio file." }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
 
 async function handleDelete(request, env, user, key) {
-    if (!user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
+    if (!user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { 'Content-Type': 'application/json' }});
     try {
         const stmt = env.MY_D1_DATABASE.prepare("DELETE FROM audios WHERE r2_key = ? AND user_id = ? RETURNING id");
         const { results } = await stmt.bind(key, user.uid).all();
 
         if (!results || results.length === 0) {
-            return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404 });
+            return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404, headers: { 'Content-Type': 'application/json' }});
         }
         
         await env.MY_R2_BUCKET.delete(key);
 
-        return new Response(JSON.stringify({ success: true, key: key }), { status: 200 });
+        return new Response(JSON.stringify({ success: true, key: key }), { status: 200, headers: { 'Content-Type': 'application/json' }});
     } catch (error) {
         console.error("Delete failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to delete audio file." }), { status: 500 });
+        return new Response(JSON.stringify({ error: "Failed to delete audio file." }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
