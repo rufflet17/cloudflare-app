@@ -70,7 +70,7 @@ async function handleGetRankings(env, params) {
             case 'monthly': format = '%Y-%m';    value = date.substring(0, 7); break;
             default: return new Response(JSON.stringify({ error: "Invalid period" }), { status: 400 });
         }
-        whereClause = `WHERE strftime(?, created_at) = ?`;
+        whereClause = `WHERE strftime(?, a.created_at) = ?`; // "a." を追加
         bindings = [format, value];
     }
 
