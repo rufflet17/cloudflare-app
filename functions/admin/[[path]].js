@@ -1,6 +1,9 @@
 // firebase-adminのJWT検証機能を模倣するためのヘルパー関数群
 async function verifyAdminToken(token, env) {
-    // 本番環境では厳格なJWT検証が必須
+    // 本番環境では、Firebase Admin SDKで発行したカスタムトークンを厳格に検証するロ-ジックが必須です。
+    // 例: joseライブラリを使って公開鍵で署名を検証するなど。
+    // 今回はデモとして、トークンが存在すればOKとします。
+    // 実際の運用ではこの部分を強化してください。
     return token ? { admin: true } : null;
 }
 
@@ -22,7 +25,7 @@ export async function onRequest(context) {
     }
 
     // --- ルーティング ---
-    const path = url.pathname.replace('/admin', '');
+    const path = url.pathname.replace('/admin', ''); // `/admin`プレフィックスを削除してルーティング
 
     if (path === '/api/rankings' && method === 'GET') {
         return handleGetRankings(env, url.searchParams);
@@ -30,9 +33,6 @@ export async function onRequest(context) {
     if (path.startsWith('/api/users/') && path.endsWith('/posts') && method === 'GET') {
         const userId = path.split('/')[3];
         return handleListUserPosts(env, userId, url.searchParams);
-    }
-    if (path === '/api/posts' && method === 'GET') { // モデルごとの投稿一覧
-        return handleListModelPosts(env, url.searchParams);
     }
     if (path.startsWith('/api/posts/') && method === 'DELETE') {
         const postId = path.split('/')[3];
@@ -57,66 +57,74 @@ export async function onRequest(context) {
 // --- API実装 ---
 
 async function handleGetRankings(env, params) {
-    const period = params.get('period');
-    const date = params.get('date');
-    const page = parseInt(params.get('page') || '1', 10);
-    const limit = 10;
-    const offset = (page - 1) * limit;
+    const period = params.get('period'); // 'all', 'monthly', 'weekly', 'daily'
+    const date = params.get('date');     // 'YYYY-MM-DD'
 
     let whereClause = '';
     let bindings = [];
 
     if (period !== 'all') {
-        // ... (期間指定のロジックは変更なし) ...
-        if (!date) return new Response(JSON.stringify({ error: "Date is required" }), { status: 400 });
+        if (!date) {
+            return new Response(JSON.stringify({ error: "Date parameter is required for periodic rankings" }), { 
+                status: 400, headers: { 'Content-Type': 'application/json' }
+            });
+        }
+        
         switch (period) {
-            case 'daily':
+            case 'daily': {
+                // 指定された1日のみを集計
                 whereClause = `WHERE date(a.created_at) = ?`;
                 bindings.push(date);
                 break;
-            case 'weekly':
-                const endDate = new Date(date + 'T23:59:59.999Z');
+            }
+            case 'weekly': {
+                // 指定された日から過去7日間 (当日を含む) を集計
+                const endDate = new Date(date + 'T23:59:59.999Z'); // 当日の終わりまで
                 const startDate = new Date(endDate);
-                startDate.setDate(startDate.getDate() - 6);
-                startDate.setUTCHours(0, 0, 0, 0);
+                startDate.setDate(startDate.getDate() - 6); // 6日前が開始日
+                startDate.setUTCHours(0, 0, 0, 0); // 開始日の始まりから
+
                 whereClause = `WHERE a.created_at BETWEEN ? AND ?`;
                 bindings.push(startDate.toISOString(), endDate.toISOString());
                 break;
-            case 'monthly':
+            }
+            case 'monthly': {
+                // 指定された月を集計
                 whereClause = `WHERE strftime('%Y-%m', a.created_at) = ?`;
-                bindings.push(date.substring(0, 7));
+                bindings.push(date.substring(0, 7)); // YYYY-MM
                 break;
+            }
             default:
-                return new Response(JSON.stringify({ error: "Invalid period" }), { status: 400 });
+                return new Response(JSON.stringify({ error: "Invalid period" }), { 
+                    status: 400, headers: { 'Content-Type': 'application/json' }
+                });
         }
     }
 
     try {
-        const countQuery = `SELECT COUNT(DISTINCT user_id) as total FROM audios a ${whereClause.replace('a.created_at', 'created_at')}`;
-        const totalResult = await env.MY_D1_DATABASE.prepare(countQuery).bind(...bindings).first();
-        const total = totalResult.total;
-        
         const query = `
-            SELECT a.user_id, COUNT(a.id) as post_count, COALESCE(us.is_blocked, 0) as is_blocked
-            FROM audios a LEFT JOIN user_status us ON a.user_id = us.user_id
-            ${whereClause}
-            GROUP BY a.user_id ORDER BY post_count DESC
-            LIMIT ? OFFSET ?`;
-        
-        const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings, limit, offset).all();
-        
-        return new Response(JSON.stringify({ results: results || [], total }), { headers: { 'Content-Type': 'application/json' }});
+            SELECT 
+                a.user_id, 
+                COUNT(a.id) as post_count,
+                COALESCE(us.is_blocked, 0) as is_blocked
+             FROM audios a
+             LEFT JOIN user_status us ON a.user_id = us.user_id
+             ${whereClause}
+             GROUP BY a.user_id
+             ORDER BY post_count DESC
+             LIMIT 100`;
+        const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
+        return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' }});
     } catch (e) {
         console.error("Error in handleGetRankings:", e);
-        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
 
+
 async function handleListUserPosts(env, userId, params) {
     const searchText = params.get('searchText');
-    const page = parseInt(params.get('page') || '1', 10);
-    const limit = 10;
-    const offset = (page - 1) * limit;
+    const limitParam = params.get('limit');
     
     let whereConditions = ['user_id = ?'];
     let bindings = [userId];
@@ -127,75 +135,60 @@ async function handleListUserPosts(env, userId, params) {
     }
 
     const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
-    
-    try {
-        const countQuery = `SELECT COUNT(*) as total FROM audios ${whereClause}`;
-        const totalResult = await env.MY_D1_DATABASE.prepare(countQuery).bind(...bindings).first();
-        const total = totalResult.total;
-
-        const query = `SELECT id, r2_key, model_name, text_content, created_at FROM audios ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
-        const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings, limit, offset).all();
-
-        return new Response(JSON.stringify({ results: results || [], total }), { headers: { 'Content-Type': 'application/json' }});
-    } catch (e) {
-        console.error("Error in handleListUserPosts:", e);
-        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
-    }
-}
-
-async function handleListModelPosts(env, params) {
-    const modelName = params.get('modelName');
-    const limitParam = params.get('limit');
-    if (!modelName) return new Response(JSON.stringify({ error: "modelName is required" }), { status: 400 });
-
-    let bindings = [modelName];
     const limitClause = limitParam === 'all' ? '' : 'LIMIT ?';
     if (limitParam !== 'all') {
-        bindings.push(parseInt(limitParam, 10) || 100);
+        const limit = parseInt(limitParam, 10) || 100;
+        bindings.push(limit);
     }
-    
+
     try {
-        const query = `SELECT id, r2_key, user_id, text_content, created_at FROM audios WHERE model_name = ? ORDER BY created_at DESC ${limitClause}`;
+        const query = `SELECT id, r2_key, model_name, text_content, created_at FROM audios ${whereClause} ORDER BY created_at DESC ${limitClause}`;
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
-        return new Response(JSON.stringify({ results: results || [] }), { headers: { 'Content-Type': 'application/json' }});
+        return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' }});
     } catch (e) {
-        console.error("Error in handleListModelPosts:", e);
-        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+        console.error("Error in handleListUserPosts:", e);
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
 
 async function handleDeletePost(env, postId) {
-    // (この関数は変更なし)
     try {
         const stmt = env.MY_D1_DATABASE.prepare(`SELECT r2_key FROM audios WHERE id = ?`);
         const post = await stmt.bind(postId).first();
-        if (!post) return new Response(JSON.stringify({ error: "Post not found" }), { status: 404 });
+
+        if (!post) {
+            return new Response(JSON.stringify({ error: "Post not found" }), { status: 404, headers: { 'Content-Type': 'application/json' }});
+        }
+
         await env.MY_R2_BUCKET.delete(post.r2_key);
         await env.MY_D1_DATABASE.prepare(`DELETE FROM audios WHERE id = ?`).bind(postId).run();
+
         return new Response(JSON.stringify({ success: true, deleted_post_id: postId }), { headers: { 'Content-Type': 'application/json' }});
     } catch (e) {
         console.error("Error in handleDeletePost:", e);
-        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
 
 async function handleDeleteAllPosts(env, userId) {
-    // (この関数は変更なし)
     try {
         const { results } = await env.MY_D1_DATABASE.prepare(`SELECT r2_key FROM audios WHERE user_id = ?`).bind(userId).all();
-        if (!results || results.length === 0) return new Response(JSON.stringify({ message: "No posts to delete." }), { status: 200 });
+        if (!results || results.length === 0) {
+            return new Response(JSON.stringify({ message: "No posts to delete." }), { status: 200, headers: { 'Content-Type': 'application/json' }});
+        }
         const keysToDelete = results.map(row => row.r2_key);
-        if (keysToDelete.length > 0) await env.MY_R2_BUCKET.delete(keysToDelete);
+        if (keysToDelete.length > 0) {
+            await env.MY_R2_BUCKET.delete(keysToDelete);
+        }
         await env.MY_D1_DATABASE.prepare(`DELETE FROM audios WHERE user_id = ?`).bind(userId).run();
         return new Response(JSON.stringify({ success: true, deleted_count: keysToDelete.length }), { headers: { 'Content-Type': 'application/json' }});
     } catch (e) {
         console.error("Error in handleDeleteAllPosts:", e);
-        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
 
 async function handleSetBlockStatus(env, userId, isBlocked) {
-    // (この関数は変更なし)
      try {
         await env.MY_D1_DATABASE.prepare(
             `INSERT INTO user_status (user_id, is_blocked, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -204,6 +197,6 @@ async function handleSetBlockStatus(env, userId, isBlocked) {
         return new Response(JSON.stringify({ success: true, user_id: userId, is_blocked: isBlocked }), { headers: { 'Content-Type': 'application/json' }});
      } catch (e) {
         console.error("Error in handleSetBlockStatus:", e);
-        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
