@@ -291,13 +291,17 @@ async function handleList(request, env, user) {
         const filter = params.get('filter');
         const modelId = params.get('modelId');
         const searchText = params.get('searchText');
+        const userId = params.get('userId');
         
         const offset = (page - 1) * limit;
 
         let conditions = [];
         let bindings = [];
 
-        if (filter === 'mine') {
+        if (userId) {
+            conditions.push("user_id = ?");
+            bindings.push(userId);
+        } else if (filter === 'mine') {
             if (!user || !user.uid) {
                 return new Response(JSON.stringify({ error: "このフィルターには認証が必要です。" }), { status: 401 });
             }
