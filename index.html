@@ -302,7 +302,7 @@
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
         let currentUser = null;
-        let userProfile = { is_muted: 0 };
+        let userProfile = { is_muted: 0, is_blocked: 0 };
         const localDataStore = new Map();
 
         async function getIdToken() {
@@ -359,7 +359,7 @@
                 alert(`エラーが発生しました: ${error.message}`);
             }
         }
-        function updateUIForAuthState(user) {
+        async function updateUIForAuthState(user) {
             const loginBtn = document.getElementById('login-btn');
             const logoutBtn = document.getElementById('logout-btn');
             const userDisplayWrapper = document.getElementById('user-display-wrapper');
@@ -370,36 +370,38 @@
             const r2FilterMineToggle = document.getElementById('r2-filter-mine-toggle');
             currentUser = user;
             
+            const saveButtons = [saveToR2Btn, savePreviewToR2Btn];
+            
             if (user) {
                 loginBtn.style.display = 'none';
                 logoutBtn.style.display = 'block';
                 userDisplayWrapper.style.display = 'flex';
 
-                // プロファイル取得中は保存ボタンを無効化
-                if (saveToR2Btn) saveToR2Btn.disabled = true;
-                if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = true;
+                saveButtons.forEach(btn => { if(btn) btn.disabled = true; });
 
-                fetch('/api/profile').then(res => res.ok ? res.json() : { username: null, is_muted: 0, is_blocked: 0 })
-                .then(profile => {
-                    Object.assign(userProfile, profile); // オブジェクトのプロパティを更新
-                    const displayName = profile.username ? profile.username : (user.displayName || user.email);
-                    userInfo.textContent = displayName;
-                    userInfo.title = displayName;
-                }).catch(err => {
+                try {
+                    const response = await fetch('/api/profile');
+                    if (response.ok) {
+                        const profile = await response.json();
+                        Object.assign(userProfile, profile);
+                    } else {
+                         Object.assign(userProfile, { username: null, is_muted: 0, is_blocked: 0 });
+                    }
+                } catch(err) {
                     console.error("プロファイル取得エラー:", err);
                     Object.assign(userProfile, { username: null, is_muted: 0, is_blocked: 0 });
-                    const displayName = user.displayName || user.email;
+                } finally {
+                    const displayName = userProfile.username ? userProfile.username : (user.displayName || user.email);
                     userInfo.textContent = displayName;
                     userInfo.title = displayName;
-                }).finally(() => {
-                    // プロファイル取得完了後、ブロック状態でなければ保存ボタンを有効化
-                    if (userProfile.is_blocked !== 1) {
-                        if (saveToR2Btn) saveToR2Btn.disabled = false;
-                        if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = false;
+                    
+                    if (userProfile.is_blocked === 1) {
+                        setStatus('あなたのアカウントは投稿が制限されています。', true);
+                        saveButtons.forEach(btn => { if(btn) btn.disabled = true; });
                     } else {
-                         setStatus('あなたのアカウントは投稿が制限されています。', true);
+                        saveButtons.forEach(btn => { if(btn) btn.disabled = false; });
                     }
-                });
+                }
 
                 editUsernameBtn.onclick = handleEditUsername;
                 r2GalleryTab.classList.remove('locked-feature');
@@ -417,8 +419,7 @@
                 userDisplayWrapper.style.display = 'none';
                 r2GalleryTab.classList.add('locked-feature');
                 r2GalleryWrapper.classList.add('locked-feature');
-                if (saveToR2Btn) saveToR2Btn.disabled = true;
-                if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = true;
+                saveButtons.forEach(btn => { if(btn) btn.disabled = true; });
                 if (r2FilterMineToggle) {
                     r2FilterMineToggle.checked = false;
                     r2FilterMineToggle.disabled = true;
@@ -442,6 +443,7 @@
         document.getElementById('logout-btn').addEventListener('click', () => auth.signOut());
         auth.onAuthStateChanged(updateUIForAuthState);
         
+        window.currentUser = currentUser;
         window.userProfile = userProfile;
         window.localDataStore = localDataStore;
     })();
@@ -567,7 +569,7 @@
             const filesFromServer = await response.json();
             r2GalleryState.hasNextPage = filesFromServer.length === 10;
 
-            const localFiles = Array.from(window.localDataStore.entries()).map(([key, data]) => ({
+            const cacheFile = Array.from(window.localDataStore.entries()).map(([key, data]) => ({
                 r2_key: key,
                 user_id: window.currentUser.uid,
                 model_name: data.modelId,
@@ -576,12 +578,14 @@
                 username: (window.userProfile && window.userProfile.username) ? window.userProfile.username : '匿名ユーザー'
             })).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
             
-            const combinedFiles = [...localFiles, ...filesFromServer];
+            const combinedFiles = [...cacheFile, ...filesFromServer];
             renderR2Gallery(combinedFiles);
 
         } catch (error) {
             console.error('R2 gallery load error:', error);
-            r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`;
+            if (window.currentUser) { // Avoid showing error for logged out users
+                r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`;
+            }
             r2GalleryState.hasNextPage = false;
         } finally {
             r2GalleryState.isLoading = false;
@@ -591,6 +595,13 @@
 
     async function saveAudioToR2(blob, modelId, text, button) {
         button.disabled = true;
+
+        // Ensure currentUser is available before proceeding
+        if (!window.currentUser) {
+            setStatus('ログイン情報が確認できません。ページをリロードしてください。', true);
+            button.disabled = false;
+            return;
+        }
 
         if (window.userProfile && window.userProfile.is_muted === 1) {
             const localKey = `local-${crypto.randomUUID()}`;
