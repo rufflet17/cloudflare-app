@@ -71,8 +71,6 @@
         }
         .player-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; background-color: #f9f9f9; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
         .player-card.is-error { background-color: #f8d7da; border-color: #f5c6cb; }
-        .player-card.is-test-post { border-left: 4px solid var(--info-color); background-color: #f0f8ff; }
-        .test-post-label { font-size: 0.8em; font-weight: bold; color: var(--info-color); margin-left: 8px; }
         .card-main { flex-grow: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
         .card-main audio { width: 100%; max-height: 40px; }
         .error-message { font-weight: bold; color: #721c24; }
@@ -128,14 +126,14 @@
         #r2-filter-status { display: none; padding: 8px 12px; margin-bottom: 1rem; border-radius: 4px; background-color: #e2e3e5; text-align: center; font-size: 0.9em; }
         #r2-filter-status button { background: none; border: none; color: var(--primary-color); text-decoration: underline; cursor: pointer; padding: 0 4px; font-size: inherit; }
         .card-owner-info {
-            font-weight: bold;
+            /* font-weight: bold; */ /* この行を削除またはコメントアウト */
             margin: 0;
             word-break: break-all;
             display: flex;
             justify-content: space-between;
             align-items: baseline;
         }
-        .card-owner-info .is-own { font-size: 0.8em; color: var(--primary-color); }
+        .card-owner-info .is-own { font-size: 0.8em; color: var(--primary-color); font-weight: bold; /* 自分を示すラベルのみ太字に */ }
         @media (max-width: 768px) {
             .container-wrapper { position: static; transform: none; width: auto; margin: 1rem; padding: 1rem; cursor: default; }
             .container-header { padding: 0; border-bottom: none; cursor: default; }
@@ -491,9 +489,6 @@
             card.dataset.userId = file.user_id;
 
             const isTestPost = file.is_test_post;
-            if (isTestPost) {
-                card.classList.add('is-test-post');
-            }
 
             const modelDisplayName = getModelData(file.model_name).displayName || file.model_name;
             const formatConfig = getFormatConfigByContentType(isTestPost ? file.content_type : `audio/${file.r2_key.split('.').pop()}`);
@@ -502,7 +497,6 @@
             const isOwnFile = currentUid && file.user_id === currentUid;
             const ownerUsername = file.username || '匿名ユーザー';
             const ownerIndicator = isOwnFile ? ` <span class="is-own">(自分)</span>` : '';
-            const testLabel = isTestPost ? ` <span class="test-post-label">(テスト)</span>` : '';
 
             const deleteBtnDataAttr = isTestPost ? `data-is-test-post="true"` : '';
             const actionButton = (isOwnFile || isTestPost)
@@ -530,7 +524,7 @@
                 <div class="card-main">
                     <div style="margin-bottom: 8px;">
                         <div class="card-owner-info">
-                            <span>${modelDisplayName}${testLabel}</span>
+                            <span>${modelDisplayName}</span>
                             <span>${ownerUsername}${ownerIndicator}</span>
                         </div>
                         <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p>
