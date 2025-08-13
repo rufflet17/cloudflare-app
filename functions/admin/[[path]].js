@@ -1,18 +1,14 @@
 // backend/index.js
 
-// firebase-adminのJWT検証機能を模倣するためのヘルパー関数群
 async function verifyAdminToken(token, env) {
-    // 本番環境では、Firebase Admin SDKで発行したカスタムトークンを厳格に検証するロ-ジックが必須です。
     return token ? { admin: true } : null;
 }
 
-// --- 管理者APIのメインハンドラー ---
 export async function onRequest(context) {
     const { request, env } = context;
     const url = new URL(request.url);
     const method = request.method;
 
-    // --- 管理者認証 ---
     const authHeader = request.headers.get('Authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return new Response(JSON.stringify({ error: "Unauthorized: Missing token" }), { status: 401, headers: { 'Content-Type': 'application/json' }});
@@ -23,7 +19,6 @@ export async function onRequest(context) {
         return new Response(JSON.stringify({ error: "Unauthorized: Invalid or non-admin token" }), { status: 403, headers: { 'Content-Type': 'application/json' }});
     }
 
-    // --- ルーティング ---
     const path = url.pathname.replace('/admin', '');
 
     if (path === '/api/posts/all' && method === 'GET') {
@@ -33,7 +28,6 @@ export async function onRequest(context) {
         const postId = path.split('/')[3];
         return handleDeletePost(env, postId);
     }
-    // 以下は、管理者ツールから直接使わない可能性がある補助的な機能
     if (path.startsWith('/api/users/') && path.endsWith('/delete-all-posts') && method === 'POST') {
         const userId = path.split('/')[3];
         return handleDeleteAllPosts(env, userId);
@@ -50,27 +44,25 @@ export async function onRequest(context) {
 
 // --- API実装 ---
 
-/**
- * 【最重要】管理者ツールが全データをローカルに同期するためのAPI。
- * 論理削除されたものも含め、すべての投稿データをページネーションで取得する。
- */
 async function handleGetAllPosts(env, params) {
     const limit = parseInt(params.get('limit'), 10) || 1000;
-    const cursor = params.get('cursor'); 
+    const cursor_ts = params.get('cursor_ts'); 
+    const cursor_id = params.get('cursor_id');
 
     let whereClause = '';
     let bindings = [];
 
-    if (cursor) {
-        whereClause = 'WHERE created_at < ?';
-        bindings.push(cursor);
+    if (cursor_ts && cursor_id) {
+        whereClause = 'WHERE (created_at < ?) OR (created_at = ? AND id < ?)';
+        bindings.push(cursor_ts, cursor_ts, cursor_id);
     }
 
     try {
+        // ★★★ 修正箇所: SELECT句に is_deleted と deleted_at を追加 ★★★
         const query = `
             SELECT id, r2_key, user_id, model_name, text_content, created_at, is_deleted, deleted_at FROM audios 
             ${whereClause} 
-            ORDER BY created_at DESC 
+            ORDER BY created_at DESC, id DESC
             LIMIT ?`;
         
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings, limit + 1).all();
@@ -88,9 +80,6 @@ async function handleGetAllPosts(env, params) {
     }
 }
 
-/**
- * 【重要】管理者ツールから特定の投稿を完全に削除するためのAPI（物理削除）。
- */
 async function handleDeletePost(env, postId) {
     try {
         const post = await env.MY_D1_DATABASE.prepare(`SELECT r2_key FROM audios WHERE id = ?`).bind(postId).first();
@@ -110,21 +99,14 @@ async function handleDeletePost(env, postId) {
     }
 }
 
-
-/**
- * 【補助機能】管理者ツールから特定のユーザーの全投稿を完全に削除するAPI。
- */
 async function handleDeleteAllPosts(env, userId) {
     try {
-        // 論理削除済みも含め、そのユーザーの全投稿を取得
         const { results } = await env.MY_D1_DATABASE.prepare(`SELECT r2_key FROM audios WHERE user_id = ?`).bind(userId).all();
-        
         if (results && results.length > 0) {
             const keysToDelete = results.map(row => row.r2_key).filter(Boolean);
             if (keysToDelete.length > 0) {
                 await env.MY_R2_BUCKET.delete(keysToDelete);
             }
-            // D1からレコードを完全に削除
             await env.MY_D1_DATABASE.prepare(`DELETE FROM audios WHERE user_id = ?`).bind(userId).run();
             return new Response(JSON.stringify({ success: true, deleted_count: keysToDelete.length }), { headers: { 'Content-Type': 'application/json' }});
         }
@@ -135,9 +117,6 @@ async function handleDeleteAllPosts(env, userId) {
     }
 }
 
-/**
- * 【補助機能】管理者ツールからユーザーをブロック/ブロック解除するAPI。
- */
 async function handleSetBlockStatus(env, userId, isBlocked) {
      try {
         await env.MY_D1_DATABASE.prepare(
