@@ -59,12 +59,16 @@ async function handleGetPostsSince(env, params) {
         });
     }
     try {
-        const whereClause = 'WHERE (created_at > ?) OR (created_at = ? AND id > ?)';
+        const whereClause = 'WHERE (a.created_at > ?) OR (a.created_at = ? AND a.id > ?)';
         const bindings = [cursor_ts, cursor_ts, cursor_id];
         const query = `
-            SELECT id, r2_key, user_id, model_name, text_content, created_at, is_deleted, deleted_at FROM audios 
+            SELECT 
+                a.id, a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, a.is_deleted, a.deleted_at,
+                p.username
+            FROM audios AS a
+            LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
             ${whereClause} 
-            ORDER BY created_at ASC, id ASC
+            ORDER BY a.created_at ASC, a.id ASC
             LIMIT ?`;
         
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings, limit + 1).all();
@@ -89,15 +93,19 @@ async function handleGetAllPosts(env, params) {
     let bindings = [];
 
     if (cursor_ts && cursor_id) {
-        whereClause = 'WHERE (created_at < ?) OR (created_at = ? AND id < ?)';
+        whereClause = 'WHERE (a.created_at < ?) OR (a.created_at = ? AND a.id < ?)';
         bindings.push(cursor_ts, cursor_ts, cursor_id);
     }
 
     try {
         const query = `
-            SELECT id, r2_key, user_id, model_name, text_content, created_at, is_deleted, deleted_at FROM audios 
+            SELECT 
+                a.id, a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, a.is_deleted, a.deleted_at,
+                p.username
+            FROM audios AS a
+            LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
             ${whereClause} 
-            ORDER BY created_at DESC, id DESC
+            ORDER BY a.created_at DESC, a.id DESC
             LIMIT ?`;
         
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings, limit + 1).all();
