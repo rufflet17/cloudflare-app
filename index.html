@@ -436,7 +436,7 @@
     
     // --- R2ストレージ関連関数 ---
     function renderR2Gallery(files) {
-        r2GalleryContainer.innerHTML = ''; // Clear previous content
+        r2GalleryContainer.innerHTML = '';
         if (!files || files.length === 0) {
              r2GalleryContainer.innerHTML = r2GalleryState.currentPage === 1 
                 ? '<p>条件に一致する音声はありません。</p>'
@@ -457,7 +457,9 @@
                 ? `handleLocalDownload(event, '${file.r2_key}')`
                 : `this.href='/api/get/${encodeURIComponent(file.r2_key)}'`;
             
-            const formatConfig = getFormatConfigByContentType(isLocal ? window.localDataStore.get(file.r2_key)?.blob.type : `audio/${file.r2_key.split('.').pop()}`);
+            const cacheItem = window.localDataStore.get(file.r2_key);
+            const contentType = isLocal ? (cacheItem ? cacheItem.blob.type : 'audio/mp3') : `audio/${file.r2_key.split('.').pop()}`;
+            const formatConfig = getFormatConfigByContentType(contentType);
             const downloadFilename = createSafeFileName(file.model_name, file.text_content, formatConfig.extension);
             
             const isOwnFile = currentUid && file.user_id === currentUid;
@@ -509,7 +511,6 @@
             const a = event.currentTarget;
             const url = URL.createObjectURL(localData.blob);
             a.href = url;
-            // Timeout to allow browser to initiate download
             setTimeout(() => URL.revokeObjectURL(url), 100);
         }
     }
