@@ -126,14 +126,14 @@
         #r2-filter-status { display: none; padding: 8px 12px; margin-bottom: 1rem; border-radius: 4px; background-color: #e2e3e5; text-align: center; font-size: 0.9em; }
         #r2-filter-status button { background: none; border: none; color: var(--primary-color); text-decoration: underline; cursor: pointer; padding: 0 4px; font-size: inherit; }
         .card-owner-info {
-            /* font-weight: bold; */ /* この行を削除またはコメントアウト */
+            /* font-weight: bold; */
             margin: 0;
             word-break: break-all;
             display: flex;
             justify-content: space-between;
             align-items: baseline;
         }
-        .card-owner-info .is-own { font-size: 0.8em; color: var(--primary-color); font-weight: bold; /* 自分を示すラベルのみ太字に */ }
+        .card-owner-info .is-own { font-size: 0.8em; color: var(--primary-color); font-weight: bold; }
         @media (max-width: 768px) {
             .container-wrapper { position: static; transform: none; width: auto; margin: 1rem; padding: 1rem; cursor: default; }
             .container-header { padding: 0; border-bottom: none; cursor: default; }
@@ -445,7 +445,6 @@
     
     // --- R2ストレージ関連関数 ---
     
-    // テスト投稿用ヘルパー関数
     function base64toBlob(base64, contentType = '', sliceSize = 512) {
         const byteCharacters = atob(base64);
         const byteArrays = [];
@@ -467,12 +466,17 @@
             return posts ? JSON.parse(posts) : [];
         } catch (e) {
             console.error("Failed to parse test posts from sessionStorage:", e);
-            sessionStorage.removeItem('testPosts'); // 壊れたデータを削除
+            sessionStorage.removeItem('testPosts');
             return [];
         }
     }
     
     function renderR2Gallery(files) {
+        // 古いBlob URLを解放
+        r2GalleryContainer.querySelectorAll('audio[src^="blob:"]').forEach(audio => {
+            URL.revokeObjectURL(audio.src);
+        });
+        
         if (!files || files.length === 0) {
              r2GalleryContainer.innerHTML = r2GalleryState.currentPage === 1 
                 ? '<p>条件に一致する音声はありません。</p>'
@@ -567,13 +571,8 @@
         updateR2PaginationUI();
         updateR2FilterStatusUI();
 
-        let testPosts = [];
-        // フィルタリングされていない最初のページにのみテスト投稿を表示
-        if (r2GalleryState.currentPage === 1 && !r2GalleryState.userId && !r2GalleryState.modelId && !r2GalleryState.searchText && r2GalleryState.filter !== 'mine') {
-             testPosts = getTestPostsFromSession();
-        }
-
         try {
+            // サーバーからデータを取得
             const params = new URLSearchParams({ page: r2GalleryState.currentPage, filter: r2GalleryState.filter });
             if (r2GalleryState.modelId) params.append('modelId', r2GalleryState.modelId);
             if (r2GalleryState.searchText) params.append('searchText', r2GalleryState.searchText);
@@ -584,10 +583,27 @@
                 throw new Error(errData.error || '一覧の取得に失敗しました。');
             }
             const filesFromServer = await response.json();
-            
-            const allFiles = [...testPosts, ...filesFromServer];
             r2GalleryState.hasNextPage = filesFromServer.length === 10;
-            renderR2Gallery(allFiles);
+
+            // セッションからテスト投稿を取得し、現在のフィルターで絞り込む
+            let allTestPosts = getTestPostsFromSession();
+            let filteredTestPosts = allTestPosts.filter(post => {
+                const state = r2GalleryState;
+                const currentUser = window.currentUser;
+
+                if (state.filter === 'mine' && (!currentUser || post.user_id !== currentUser.uid)) return false;
+                if (state.userId && post.user_id !== state.userId) return false;
+                if (state.modelId && post.model_name !== state.modelId) return false;
+                if (state.searchText && !post.text_content.toLowerCase().includes(state.searchText.toLowerCase())) return false;
+                
+                return true;
+            });
+            
+            // サーバーデータとテスト投稿を結合し、タイムスタンプでソート
+            const combinedFiles = [...filesFromServer, ...filteredTestPosts];
+            combinedFiles.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            
+            renderR2Gallery(combinedFiles);
 
         } catch (error) {
             console.error('R2 gallery load error:', error);
@@ -617,7 +633,7 @@
                     
                     const currentUser = window.currentUser;
                     const userInfoEl = document.getElementById('user-info');
-                    const username = (currentUser && userInfoEl.textContent) ? userInfoEl.textContent : (currentUser ? (currentUser.displayName || '匿名ユーザー') : '自分 (未ログイン)');
+                    const username = (currentUser && userProfile) ? userProfile.username : (currentUser ? (currentUser.displayName || '匿名ユーザー') : '自分 (未ログイン)');
 
                     const newPost = {
                         r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
@@ -627,7 +643,8 @@
                         username: username,
                         audio_base64: base64Audio,
                         content_type: blob.type,
-                        is_test_post: true
+                        is_test_post: true,
+                        created_at: new Date().toISOString() // タイムスタンプを追加
                     };
 
                     testPosts.unshift(newPost);
