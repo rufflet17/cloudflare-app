@@ -267,21 +267,12 @@ async function handleUpload(request, env, decodedToken) {
     const user = { uid: decodedToken.sub };
 
     try {
-        const userStatusStmt = env.MY_D1_DATABASE.prepare(`SELECT is_muted, is_blocked FROM user_status WHERE user_id = ?`);
-        const userStatus = await userStatusStmt.bind(user.uid).first();
-
-        if (userStatus && userStatus.is_muted === 1) {
-            console.log(`Muted user detected: ${user.uid}. Instructing client to cache.`);
-            return new Response(JSON.stringify({ action: "cache" }), { 
-                status: 202, // Accepted: リクエストは受け付けたが、標準とは異なる処理を指示
-                headers: { 'Content-Type': 'application/json' }
-            });
-        }
-
+        const stmt = env.MY_D1_DATABASE.prepare(`SELECT is_blocked FROM user_status WHERE user_id = ?`);
+        const userStatus = await stmt.bind(user.uid).first();
         if (userStatus && userStatus.is_blocked === 1) {
             return new Response(JSON.stringify({ error: "あなたのアカウントは投稿が制限されています。" }), { status: 403 });
         }
-        
+
         const { modelId, text, audioBase64, contentType } = await request.json();
         if (!modelId || !text || !audioBase64 || !contentType) {
             return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
@@ -433,30 +424,19 @@ async function handleLogicalDelete(request, env, decodedToken, key) {
 }
 
 async function handleProfile(request, env, decodedToken) {
+    // decodedToken は isProtectedRoute のチェックで検証済み
     const userId = decodedToken.sub;
 
     if (request.method === 'GET') {
         const stmt = env.MY_D1_DATABASE.prepare(
-            `SELECT p.username, s.is_blocked, s.is_muted
-             FROM user_profiles AS p
-             LEFT JOIN user_status AS s ON p.user_id = s.user_id
-             WHERE p.user_id = ?`
+            `SELECT username FROM user_profiles WHERE user_id = ?`
         );
-        let profile = await stmt.bind(userId).first();
+        const profile = await stmt.bind(userId).first();
 
         if (!profile) {
-            const statusStmt = env.MY_D1_DATABASE.prepare(`SELECT is_blocked, is_muted FROM user_status WHERE user_id = ?`);
-            const status = await statusStmt.bind(userId).first();
-            profile = { username: null, ...status };
+            return new Response(JSON.stringify({ error: "Profile not found" }), { status: 404 });
         }
-        
-        const responseProfile = {
-            username: profile.username,
-            is_blocked: profile.is_blocked || 0,
-            is_muted: profile.is_muted || 0
-        };
-
-        return new Response(JSON.stringify(responseProfile), { headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify(profile), { headers: { 'Content-Type': 'application/json' } });
     }
 
     if (request.method === 'POST') {
