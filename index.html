@@ -306,8 +306,8 @@
         const localDataStore = new Map();
 
         async function getIdToken() {
-            if (!auth.currentUser) return null;
-            try { return await auth.currentUser.getIdToken(true); } 
+            if (!currentUser) return null;
+            try { return await currentUser.getIdToken(true); } 
             catch (error) { console.error("IDトークンの取得に失敗:", error); return null; }
         }
         const originalFetch = window.fetch;
@@ -368,11 +368,11 @@
             const r2GalleryTab = document.querySelector('.tab-button[data-tab="r2-gallery"]');
             const r2GalleryWrapper = document.getElementById('r2-gallery-wrapper');
             const r2FilterMineToggle = document.getElementById('r2-filter-mine-toggle');
-            currentUser = user;
             
             const saveButtons = [saveToR2Btn, savePreviewToR2Btn];
             
             if (user) {
+                currentUser = user;
                 loginBtn.style.display = 'none';
                 logoutBtn.style.display = 'block';
                 userDisplayWrapper.style.display = 'flex';
@@ -381,12 +381,8 @@
 
                 try {
                     const response = await fetch('/api/profile');
-                    if (response.ok) {
-                        const profile = await response.json();
-                        Object.assign(userProfile, profile);
-                    } else {
-                         Object.assign(userProfile, { username: null, is_muted: 0, is_blocked: 0 });
-                    }
+                    const profile = response.ok ? await response.json() : { username: null, is_muted: 0, is_blocked: 0 };
+                    Object.assign(userProfile, profile);
                 } catch(err) {
                     console.error("プロファイル取得エラー:", err);
                     Object.assign(userProfile, { username: null, is_muted: 0, is_blocked: 0 });
@@ -408,7 +404,7 @@
                 r2GalleryWrapper.classList.remove('locked-feature');
                 if (r2FilterMineToggle) r2FilterMineToggle.disabled = false;
                 if (typeof loadR2Gallery === 'function' && r2GalleryTab.classList.contains('active')) {
-                   loadR2Gallery();
+                   await loadR2Gallery();
                 }
             } else {
                 currentUser = null;
@@ -443,8 +439,6 @@
         document.getElementById('logout-btn').addEventListener('click', () => auth.signOut());
         auth.onAuthStateChanged(updateUIForAuthState);
         
-        window.currentUser = currentUser;
-        window.userProfile = userProfile;
         window.localDataStore = localDataStore;
     })();
     
@@ -457,7 +451,7 @@
                 : '<p>これ以上音声はありません。</p>';
              return;
         }
-        const currentUid = window.currentUser ? window.currentUser.uid : null;
+        const currentUid = currentUser ? currentUser.uid : null;
         files.forEach(file => {
             const card = document.createElement('div');
             card.className = 'player-card';
@@ -471,7 +465,7 @@
                 ? `handleLocalDownload(event, '${file.r2_key}')`
                 : `this.href='/api/get/${encodeURIComponent(file.r2_key)}'`;
             
-            const cacheItem = window.localDataStore.get(file.r2_key);
+            const cacheItem = localDataStore.get(file.r2_key);
             const contentType = isLocal ? (cacheItem ? cacheItem.blob.type : 'audio/mp3') : `audio/${file.r2_key.split('.').pop()}`;
             const formatConfig = getFormatConfigByContentType(contentType);
             const downloadFilename = createSafeFileName(file.model_name, file.text_content, formatConfig.extension);
@@ -509,7 +503,7 @@
 
     function handleAudioPlay(audioElement, key) {
         if (key.startsWith('local-') && !audioElement.src.startsWith('blob:')) {
-            const localData = window.localDataStore.get(key);
+            const localData = localDataStore.get(key);
             if (localData) {
                 const url = URL.createObjectURL(localData.blob);
                 audioElement.src = url;
@@ -520,7 +514,7 @@
     }
 
     function handleLocalDownload(event, key) {
-        const localData = window.localDataStore.get(key);
+        const localData = localDataStore.get(key);
         if (localData) {
             const a = event.currentTarget;
             const url = URL.createObjectURL(localData.blob);
@@ -551,6 +545,10 @@
 
     async function loadR2Gallery() {
         if (r2GalleryState.isLoading) return;
+        if (!currentUser) { 
+            r2GalleryContainer.innerHTML = '<p>ログインして一覧を表示します。</p>';
+            return;
+        }
         r2GalleryState.isLoading = true;
         r2GalleryContainer.innerHTML = '<p>読み込み中...</p>';
         updateR2PaginationUI();
@@ -569,21 +567,21 @@
             const filesFromServer = await response.json();
             r2GalleryState.hasNextPage = filesFromServer.length === 10;
 
-            const cacheFile = Array.from(window.localDataStore.entries()).map(([key, data]) => ({
+            const localFiles = Array.from(localDataStore.entries()).map(([key, data]) => ({
                 r2_key: key,
-                user_id: window.currentUser.uid,
+                user_id: currentUser.uid,
                 model_name: data.modelId,
                 text_content: data.text,
                 created_at: data.createdAt,
-                username: (window.userProfile && window.userProfile.username) ? window.userProfile.username : '匿名ユーザー'
+                username: (userProfile && userProfile.username) ? userProfile.username : '匿名ユーザー'
             })).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
             
-            const combinedFiles = [...cacheFile, ...filesFromServer];
+            const combinedFiles = [...localFiles, ...filesFromServer];
             renderR2Gallery(combinedFiles);
 
         } catch (error) {
             console.error('R2 gallery load error:', error);
-            if (window.currentUser) { // Avoid showing error for logged out users
+            if (currentUser) {
                 r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`;
             }
             r2GalleryState.hasNextPage = false;
@@ -596,16 +594,15 @@
     async function saveAudioToR2(blob, modelId, text, button) {
         button.disabled = true;
 
-        // Ensure currentUser is available before proceeding
-        if (!window.currentUser) {
+        if (!currentUser) {
             setStatus('ログイン情報が確認できません。ページをリロードしてください。', true);
             button.disabled = false;
             return;
         }
 
-        if (window.userProfile && window.userProfile.is_muted === 1) {
+        if (userProfile && userProfile.is_muted === 1) {
             const localKey = `local-${crypto.randomUUID()}`;
-            window.localDataStore.set(localKey, { blob, modelId, text, createdAt: new Date().toISOString() });
+            localDataStore.set(localKey, { blob, modelId, text, createdAt: new Date().toISOString() });
             setStatus(`音声の保存が完了しました。`);
             
             const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
