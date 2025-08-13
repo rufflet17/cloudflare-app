@@ -42,6 +42,12 @@ export async function onRequest(context) {
     if (path.startsWith('/api/users/') && path.endsWith('/unblock') && method === 'POST') {
         return handleSetBlockStatus(env, path.split('/')[3], false);
     }
+    if (path.startsWith('/api/users/') && path.endsWith('/mute') && method === 'POST') {
+        return handleSetMuteStatus(env, path.split('/')[3], true);
+    }
+    if (path.startsWith('/api/users/') && path.endsWith('/unmute') && method === 'POST') {
+        return handleSetMuteStatus(env, path.split('/')[3], false);
+    }
     
     return new Response(JSON.stringify({ error: "Admin API Route Not Found" }), { status: 404, headers: { 'Content-Type': 'application/json' }});
 }
@@ -64,9 +70,11 @@ async function handleGetPostsSince(env, params) {
         const query = `
             SELECT 
                 a.id, a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, a.is_deleted, a.deleted_at,
-                p.username
+                p.username,
+                us.is_blocked, us.is_muted
             FROM audios AS a
             LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
+            LEFT JOIN user_status AS us ON a.user_id = us.user_id
             ${whereClause} 
             ORDER BY a.created_at ASC, a.id ASC
             LIMIT ?`;
@@ -101,9 +109,11 @@ async function handleGetAllPosts(env, params) {
         const query = `
             SELECT 
                 a.id, a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, a.is_deleted, a.deleted_at,
-                p.username
+                p.username,
+                us.is_blocked, us.is_muted
             FROM audios AS a
             LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
+            LEFT JOIN user_status AS us ON a.user_id = us.user_id
             ${whereClause} 
             ORDER BY a.created_at DESC, a.id DESC
             LIMIT ?`;
@@ -169,6 +179,19 @@ async function handleSetBlockStatus(env, userId, isBlocked) {
         return new Response(JSON.stringify({ success: true, user_id: userId, is_blocked: isBlocked }), { headers: { 'Content-Type': 'application/json' }});
      } catch (e) {
         console.error("Error in handleSetBlockStatus:", e);
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
+    }
+}
+
+async function handleSetMuteStatus(env, userId, isMuted) {
+     try {
+        await env.MY_D1_DATABASE.prepare(
+            `INSERT INTO user_status (user_id, is_muted, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(user_id) DO UPDATE SET is_muted = excluded.is_muted, updated_at = CURRENT_TIMESTAMP`
+        ).bind(userId, isMuted ? 1 : 0).run();
+        return new Response(JSON.stringify({ success: true, user_id: userId, is_muted: isMuted }), { headers: { 'Content-Type': 'application/json' }});
+     } catch (e) {
+        console.error("Error in handleSetMuteStatus:", e);
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }

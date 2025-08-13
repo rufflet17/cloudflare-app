@@ -260,19 +260,61 @@ async function handleApiRoutes(context) {
     return new Response("API Route Not Found", { status: 404 });
 }
 
+
+// --- ミュート（地獄BAN）処理 ---
+/**
+ * ユーザーがミュート（地獄BAN）されているかチェックし、対象であればダミーの成功レスポンスを返す。
+ * @param {string} userId - チェック対象のユーザーID
+ * @param {object} env - Cloudflare環境変数
+ * @returns {Response | null} - ミュート対象であればResponseオブジェクト、対象でなければnull
+ */
+async function handleHellbanning(userId, env) {
+    try {
+        const stmt = env.MY_D1_DATABASE.prepare(`SELECT is_muted FROM user_status WHERE user_id = ?`);
+        const userStatus = await stmt.bind(userId).first();
+
+        if (userStatus && userStatus.is_muted === 1) {
+            // ミュートされている場合、D1/R2への書き込みは行わず、ダミーの成功レスポンスを返す
+            console.log(`Hellbanning user: ${userId}`);
+            return new Response(JSON.stringify({
+                success: true,
+                key: `dummy-hellban-${crypto.randomUUID()}` // キーもダミー
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        // ミュートされていない場合はnullを返し、通常の処理を続行させる
+        return null;
+    } catch (error) {
+        console.error("Hellbanning check failed:", error);
+        // このチェックでエラーが発生した場合は、安全のために通常の処理に進める
+        return null;
+    }
+}
+
 // --- 個別のAPI実装 ---
 
 async function handleUpload(request, env, decodedToken) {
     if (!decodedToken || !decodedToken.sub) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
     const user = { uid: decodedToken.sub };
 
+    // --- ここからが変更点 ---
+    // 1. まず地獄BANのチェックを行う
+    const hellbanResponse = await handleHellbanning(user.uid, env);
+    if (hellbanResponse) {
+        // もし`handleHellbanning`がResponseオブジェクトを返した場合（＝ミュート対象だった場合）、
+        // そのダミーレスポンスをそのまま返し、以降の処理を中断する。
+        return hellbanResponse;
+    }
+    // --- ここまでが変更点 ---
+
     try {
+        // 2. 次に通常のブロック状態をチェック (これは変更なし)
         const stmt = env.MY_D1_DATABASE.prepare(`SELECT is_blocked FROM user_status WHERE user_id = ?`);
         const userStatus = await stmt.bind(user.uid).first();
         if (userStatus && userStatus.is_blocked === 1) {
             return new Response(JSON.stringify({ error: "あなたのアカウントは投稿が制限されています。" }), { status: 403 });
         }
-
+        
+        // 3. 通常のアップロード処理 (これは変更なし)
         const { modelId, text, audioBase64, contentType } = await request.json();
         if (!modelId || !text || !audioBase64 || !contentType) {
             return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
