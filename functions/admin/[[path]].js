@@ -3,9 +3,6 @@
 // firebase-adminのJWT検証機能を模倣するためのヘルパー関数群
 async function verifyAdminToken(token, env) {
     // 本番環境では、Firebase Admin SDKで発行したカスタムトークンを厳格に検証するロ-ジックが必須です。
-    // 例: joseライブラリを使って公開鍵で署名を検証するなど。
-    // 今回はデモとして、トークンが存在すればOKとします。
-    // 実際の運用ではこの部分を強化してください。
     return token ? { admin: true } : null;
 }
 
@@ -27,35 +24,25 @@ export async function onRequest(context) {
     }
 
     // --- ルーティング ---
-    const path = url.pathname.replace('/admin', ''); // `/admin`プレフィックスを削除してルーティング
+    const path = url.pathname.replace('/admin', '');
 
-    // ★★★ 新しいAPIエンドポイントのルーティングを追加 ★★★
     if (path === '/api/posts/all' && method === 'GET') {
         return handleGetAllPosts(env, url.searchParams);
-    }
-
-    if (path === '/api/rankings' && method === 'GET') {
-        return handleGetRankings(env, url.searchParams);
-    }
-    if (path.startsWith('/api/users/') && path.endsWith('/posts') && method === 'GET') {
-        const userId = path.split('/')[3];
-        return handleListUserPosts(env, userId, url.searchParams);
     }
     if (path.startsWith('/api/posts/') && method === 'DELETE') {
         const postId = path.split('/')[3];
         return handleDeletePost(env, postId);
     }
+    // 以下は、管理者ツールから直接使わない可能性がある補助的な機能
     if (path.startsWith('/api/users/') && path.endsWith('/delete-all-posts') && method === 'POST') {
         const userId = path.split('/')[3];
         return handleDeleteAllPosts(env, userId);
     }
     if (path.startsWith('/api/users/') && path.endsWith('/block') && method === 'POST') {
-        const userId = path.split('/')[3];
-        return handleSetBlockStatus(env, userId, true);
+        return handleSetBlockStatus(env, path.split('/')[3], true);
     }
     if (path.startsWith('/api/users/') && path.endsWith('/unblock') && method === 'POST') {
-        const userId = path.split('/')[3];
-        return handleSetBlockStatus(env, userId, false);
+        return handleSetBlockStatus(env, path.split('/')[3], false);
     }
     
     return new Response(JSON.stringify({ error: "Admin API Route Not Found" }), { status: 404, headers: { 'Content-Type': 'application/json' }});
@@ -63,10 +50,13 @@ export async function onRequest(context) {
 
 // --- API実装 ---
 
-// ★★★ 全投稿をページネーションで取得するための新しいハンドラ ★★★
+/**
+ * 【最重要】管理者ツールが全データをローカルに同期するためのAPI。
+ * 論理削除されたものも含め、すべての投稿データをページネーションで取得する。
+ */
 async function handleGetAllPosts(env, params) {
     const limit = parseInt(params.get('limit'), 10) || 1000;
-    const cursor = params.get('cursor'); // 最後に取得したデータの created_at
+    const cursor = params.get('cursor'); 
 
     let whereClause = '';
     let bindings = [];
@@ -78,16 +68,15 @@ async function handleGetAllPosts(env, params) {
 
     try {
         const query = `
-            SELECT id, r2_key, user_id, model_name, text_content, created_at FROM audios 
+            SELECT id, r2_key, user_id, model_name, text_content, created_at, is_deleted, deleted_at FROM audios 
             ${whereClause} 
             ORDER BY created_at DESC 
             LIMIT ?`;
         
-        // 次ページがあるか判定するために limit + 1 件取得
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings, limit + 1).all();
         
         const has_more = results.length > limit;
-        const posts = results.slice(0, limit); // 返すデータは limit 件に絞る
+        const posts = results.slice(0, limit);
 
         return new Response(JSON.stringify({ posts, has_more }), { 
             headers: { 'Content-Type': 'application/json' }
@@ -99,101 +88,56 @@ async function handleGetAllPosts(env, params) {
     }
 }
 
-
-// --- 既存のAPI実装 (変更なし) ---
-
-async function handleGetRankings(env, params) {
-    const period = params.get('period');
-    const date = params.get('date');
-    let whereClause = '';
-    let bindings = [];
-    if (period !== 'all') {
-        if (!date) return new Response(JSON.stringify({ error: "Date parameter is required for periodic rankings" }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-        switch (period) {
-            case 'daily': {
-                whereClause = `WHERE date(a.created_at) = ?`;
-                bindings.push(date);
-                break;
-            }
-            case 'weekly': {
-                const endDate = new Date(date + 'T23:59:59.999Z');
-                const startDate = new Date(endDate);
-                startDate.setDate(startDate.getDate() - 6);
-                startDate.setUTCHours(0, 0, 0, 0);
-                whereClause = `WHERE a.created_at BETWEEN ? AND ?`;
-                bindings.push(startDate.toISOString(), endDate.toISOString());
-                break;
-            }
-            case 'monthly': {
-                whereClause = `WHERE strftime('%Y-%m', a.created_at) = ?`;
-                bindings.push(date.substring(0, 7));
-                break;
-            }
-            default:
-                return new Response(JSON.stringify({ error: "Invalid period" }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-        }
-    }
-    try {
-        const query = `
-            SELECT a.user_id, COUNT(a.id) as post_count, COALESCE(us.is_blocked, 0) as is_blocked
-            FROM audios a LEFT JOIN user_status us ON a.user_id = us.user_id
-            ${whereClause}
-            GROUP BY a.user_id ORDER BY post_count DESC LIMIT 100`;
-        const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
-        return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' }});
-    } catch (e) {
-        console.error("Error in handleGetRankings:", e);
-        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
-    }
-}
-
-async function handleListUserPosts(env, userId, params) {
-    const searchText = params.get('searchText');
-    let whereConditions = ['user_id = ?'];
-    let bindings = [userId];
-    if (searchText) {
-        whereConditions.push('text_content LIKE ?');
-        bindings.push(`%${searchText}%`);
-    }
-    const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
-    try {
-        const query = `SELECT id, r2_key, model_name, text_content, created_at FROM audios ${whereClause} ORDER BY created_at DESC`;
-        const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
-        return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' }});
-    } catch (e) {
-        console.error("Error in handleListUserPosts:", e);
-        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
-    }
-}
-
+/**
+ * 【重要】管理者ツールから特定の投稿を完全に削除するためのAPI（物理削除）。
+ */
 async function handleDeletePost(env, postId) {
     try {
-        const stmt = env.MY_D1_DATABASE.prepare(`SELECT r2_key FROM audios WHERE id = ?`);
-        const post = await stmt.bind(postId).first();
-        if (!post) return new Response(JSON.stringify({ error: "Post not found" }), { status: 404, headers: { 'Content-Type': 'application/json' }});
-        await env.MY_R2_BUCKET.delete(post.r2_key);
+        const post = await env.MY_D1_DATABASE.prepare(`SELECT r2_key FROM audios WHERE id = ?`).bind(postId).first();
+        if (!post) {
+            return new Response(JSON.stringify({ error: "Post not found" }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+        }
+        
+        if (post.r2_key) {
+            await env.MY_R2_BUCKET.delete(post.r2_key);
+        }
         await env.MY_D1_DATABASE.prepare(`DELETE FROM audios WHERE id = ?`).bind(postId).run();
-        return new Response(JSON.stringify({ success: true, deleted_post_id: postId }), { headers: { 'Content-Type': 'application/json' }});
+        
+        return new Response(JSON.stringify({ success: true, message: "Post permanently deleted." }), { headers: { 'Content-Type': 'application/json' }});
     } catch (e) {
         console.error("Error in handleDeletePost:", e);
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
 
+
+/**
+ * 【補助機能】管理者ツールから特定のユーザーの全投稿を完全に削除するAPI。
+ */
 async function handleDeleteAllPosts(env, userId) {
     try {
+        // 論理削除済みも含め、そのユーザーの全投稿を取得
         const { results } = await env.MY_D1_DATABASE.prepare(`SELECT r2_key FROM audios WHERE user_id = ?`).bind(userId).all();
-        if (!results || results.length === 0) return new Response(JSON.stringify({ message: "No posts to delete." }), { status: 200, headers: { 'Content-Type': 'application/json' }});
-        const keysToDelete = results.map(row => row.r2_key);
-        if (keysToDelete.length > 0) await env.MY_R2_BUCKET.delete(keysToDelete);
-        await env.MY_D1_DATABASE.prepare(`DELETE FROM audios WHERE user_id = ?`).bind(userId).run();
-        return new Response(JSON.stringify({ success: true, deleted_count: keysToDelete.length }), { headers: { 'Content-Type': 'application/json' }});
+        
+        if (results && results.length > 0) {
+            const keysToDelete = results.map(row => row.r2_key).filter(Boolean);
+            if (keysToDelete.length > 0) {
+                await env.MY_R2_BUCKET.delete(keysToDelete);
+            }
+            // D1からレコードを完全に削除
+            await env.MY_D1_DATABASE.prepare(`DELETE FROM audios WHERE user_id = ?`).bind(userId).run();
+            return new Response(JSON.stringify({ success: true, deleted_count: keysToDelete.length }), { headers: { 'Content-Type': 'application/json' }});
+        }
+        return new Response(JSON.stringify({ message: "No posts to delete." }), { headers: { 'Content-Type': 'application/json' }});
     } catch (e) {
         console.error("Error in handleDeleteAllPosts:", e);
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
 
+/**
+ * 【補助機能】管理者ツールからユーザーをブロック/ブロック解除するAPI。
+ */
 async function handleSetBlockStatus(env, userId, isBlocked) {
      try {
         await env.MY_D1_DATABASE.prepare(
