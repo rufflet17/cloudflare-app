@@ -1,4 +1,4 @@
-// backend/index.js
+// functions/admin/[[path]].js
 
 async function verifyAdminToken(token, env) {
     // 本番環境では、Firebase Admin SDKで発行したカスタムトークンを厳格に検証するロ-ジックが必須です。
@@ -22,11 +22,9 @@ export async function onRequest(context) {
 
     const path = url.pathname.replace('/admin', '');
 
-    // ★★★ 新しい差分同期APIのルーティングを追加 ★★★
     if (path === '/api/posts/since' && method === 'GET') {
         return handleGetPostsSince(env, url.searchParams);
     }
-
     if (path === '/api/posts/all' && method === 'GET') {
         return handleGetAllPosts(env, url.searchParams);
     }
@@ -50,47 +48,38 @@ export async function onRequest(context) {
 
 // --- API実装 ---
 
-// ★★★ 新しいデータを取得するための差分同期APIハンドラ ★★★
 async function handleGetPostsSince(env, params) {
     const limit = parseInt(params.get('limit'), 10) || 1000;
     const cursor_ts = params.get('cursor_ts'); 
     const cursor_id = params.get('cursor_id');
 
-    // カーソルがなければ、何も返さない（差分の基準がないため）
     if (!cursor_ts || !cursor_id) {
         return new Response(JSON.stringify({ posts: [], has_more: false }), { 
             headers: { 'Content-Type': 'application/json' }
         });
     }
-
     try {
-        // 条件: (created_at > cursor_ts) OR (created_at = cursor_ts AND id > cursor_id)
         const whereClause = 'WHERE (created_at > ?) OR (created_at = ? AND id > ?)';
         const bindings = [cursor_ts, cursor_ts, cursor_id];
-
-        // データを新しい順に取得
         const query = `
             SELECT id, r2_key, user_id, model_name, text_content, created_at, is_deleted, deleted_at FROM audios 
             ${whereClause} 
-            ORDER BY created_at DESC, id DESC
+            ORDER BY created_at ASC, id ASC
             LIMIT ?`;
         
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings, limit + 1).all();
-        
         const has_more = results.length > limit;
         const posts = results.slice(0, limit);
 
         return new Response(JSON.stringify({ posts, has_more }), { 
             headers: { 'Content-Type': 'application/json' }
         });
-
     } catch (e) {
         console.error("Error in handleGetPostsSince:", e);
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
 
-// 履歴を遡って取得するためのAPI
 async function handleGetAllPosts(env, params) {
     const limit = parseInt(params.get('limit'), 10) || 1000;
     const cursor_ts = params.get('cursor_ts'); 
