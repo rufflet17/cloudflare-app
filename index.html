@@ -302,7 +302,9 @@
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
         let currentUser = null;
-        let userProfile = null; // ユーザープロファイル情報を保持する変数
+        let userProfile = { is_muted: 0 };
+        const localDataStore = new Map();
+
         async function getIdToken() {
             if (!auth.currentUser) return null;
             try { return await auth.currentUser.getIdToken(true); } 
@@ -348,7 +350,7 @@
                     throw new Error(errData.error || '表示名の更新に失敗しました。');
                 }
                 const result = await response.json();
-                userProfile = { username: result.username }; // ローカルのプロファイルを更新
+                userProfile.username = result.username;
                 document.getElementById('user-info').textContent = result.username;
                 document.getElementById('user-info').title = result.username;
                 alert("表示名を更新しました。");
@@ -372,15 +374,15 @@
                 loginBtn.style.display = 'none';
                 logoutBtn.style.display = 'block';
                 userDisplayWrapper.style.display = 'flex';
-                // ログイン時にユーザープロファイルを取得
-                fetch('/api/profile').then(res => res.ok ? res.json() : null)
+                fetch('/api/profile').then(res => res.ok ? res.json() : { username: null, is_muted: 0 })
                 .then(profile => {
                     userProfile = profile;
-                    const displayName = profile ? profile.username : (user.displayName || user.email);
+                    const displayName = profile.username ? profile.username : (user.displayName || user.email);
                     userInfo.textContent = displayName;
                     userInfo.title = displayName;
                 }).catch(err => {
                     console.error("プロファイル取得エラー:", err);
+                    userProfile = { is_muted: 0 };
                     const displayName = user.displayName || user.email;
                     userInfo.textContent = displayName;
                     userInfo.title = displayName;
@@ -396,7 +398,8 @@
                 }
             } else {
                 currentUser = null;
-                userProfile = null;
+                userProfile = { is_muted: 0 };
+                localDataStore.clear();
                 loginBtn.style.display = 'block';
                 logoutBtn.style.display = 'none';
                 userDisplayWrapper.style.display = 'none';
@@ -426,17 +429,20 @@
         });
         document.getElementById('logout-btn').addEventListener('click', () => auth.signOut());
         auth.onAuthStateChanged(updateUIForAuthState);
+        
+        window.userProfile = userProfile;
+        window.localDataStore = localDataStore;
     })();
     
     // --- R2ストレージ関連関数 ---
     function renderR2Gallery(files) {
+        r2GalleryContainer.innerHTML = ''; // Clear previous content
         if (!files || files.length === 0) {
              r2GalleryContainer.innerHTML = r2GalleryState.currentPage === 1 
                 ? '<p>条件に一致する音声はありません。</p>'
                 : '<p>これ以上音声はありません。</p>';
              return;
         }
-        r2GalleryContainer.innerHTML = '';
         const currentUid = window.currentUser ? window.currentUser.uid : null;
         files.forEach(file => {
             const card = document.createElement('div');
@@ -444,14 +450,27 @@
             card.dataset.fileKey = file.r2_key;
             card.dataset.userId = file.user_id;
             const modelDisplayName = getModelData(file.model_name).displayName || file.model_name;
-            const formatConfig = getFormatConfigByContentType(`audio/${file.r2_key.split('.').pop()}`);
+            const isLocal = file.r2_key.startsWith('local-');
+            
+            const audioSrc = isLocal ? '' : `/api/get/${encodeURIComponent(file.r2_key)}`;
+            const downloadHandler = isLocal
+                ? `handleLocalDownload(event, '${file.r2_key}')`
+                : `this.href='/api/get/${encodeURIComponent(file.r2_key)}'`;
+            
+            const formatConfig = getFormatConfigByContentType(isLocal ? window.localDataStore.get(file.r2_key)?.blob.type : `audio/${file.r2_key.split('.').pop()}`);
             const downloadFilename = createSafeFileName(file.model_name, file.text_content, formatConfig.extension);
+            
             const isOwnFile = currentUid && file.user_id === currentUid;
             const ownerUsername = file.username || '匿名ユーザー';
             const ownerIndicator = isOwnFile ? `<span class="is-own">(自分)</span>` : '';
-            const actionButton = isOwnFile
-                ? `<button class="icon-btn btn-delete-r2" title="削除">🗑️</button>`
-                : `<button class="icon-btn btn-view-user-files" title="この投稿者の他の音声">👤</button>`;
+            
+            let actionButton = '';
+            if (isOwnFile) {
+                actionButton = isLocal ? '' : `<button class="icon-btn btn-delete-r2" title="削除">🗑️</button>`;
+            } else if (!isLocal) {
+                 actionButton = `<button class="icon-btn btn-view-user-files" title="この投稿者の他の音声">👤</button>`;
+            }
+
             card.innerHTML = `
                 <div class="card-main">
                     <div style="margin-bottom: 8px;">
@@ -461,15 +480,38 @@
                         </p>
                         <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p>
                     </div>
-                    <audio controls preload="none" src="/api/get/${encodeURIComponent(file.r2_key)}"></audio>
+                    <audio controls preload="none" src="${audioSrc}" onplay="handleAudioPlay(this, '${file.r2_key}')"></audio>
                 </div>
                 <div class="player-actions">
-                     <a href="/api/get/${encodeURIComponent(file.r2_key)}" download="${downloadFilename}" class="icon-btn download-link" title="ダウンロード">📥</a>
+                     <a onclick="${downloadHandler}" download="${downloadFilename}" class="icon-btn download-link" title="ダウンロード">📥</a>
                      ${actionButton}
                 </div>
             `;
             r2GalleryContainer.appendChild(card);
         });
+    }
+
+    function handleAudioPlay(audioElement, key) {
+        if (key.startsWith('local-') && !audioElement.src.startsWith('blob:')) {
+            const localData = window.localDataStore.get(key);
+            if (localData) {
+                const url = URL.createObjectURL(localData.blob);
+                audioElement.src = url;
+                audioElement.play();
+                audioElement.onended = () => URL.revokeObjectURL(url);
+            }
+        }
+    }
+
+    function handleLocalDownload(event, key) {
+        const localData = window.localDataStore.get(key);
+        if (localData) {
+            const a = event.currentTarget;
+            const url = URL.createObjectURL(localData.blob);
+            a.href = url;
+            // Timeout to allow browser to initiate download
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
     }
 
     function updateR2FilterStatusUI() {
@@ -510,7 +552,19 @@
             }
             const filesFromServer = await response.json();
             r2GalleryState.hasNextPage = filesFromServer.length === 10;
-            renderR2Gallery(filesFromServer);
+
+            const localFiles = Array.from(window.localDataStore.entries()).map(([key, data]) => ({
+                r2_key: key,
+                user_id: window.currentUser.uid,
+                model_name: data.modelId,
+                text_content: data.text,
+                created_at: data.createdAt,
+                username: window.userProfile.username || '匿名ユーザー'
+            })).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+
+            const combinedFiles = [...localFiles, ...filesFromServer];
+            renderR2Gallery(combinedFiles);
+
         } catch (error) {
             console.error('R2 gallery load error:', error);
             r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`;
@@ -522,8 +576,24 @@
     }
 
     async function saveAudioToR2(blob, modelId, text, button) {
+        if (window.userProfile && window.userProfile.is_muted === 1) {
+            button.disabled = true;
+            const localKey = `local-${crypto.randomUUID()}`;
+            window.localDataStore.set(localKey, { blob, modelId, text, createdAt: new Date().toISOString() });
+            setStatus(`音声の保存が完了しました。`);
+
+            const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
+            if (r2TabButton.classList.contains('active')) {
+                loadR2Gallery();
+            } else {
+                r2TabButton.click();
+            }
+            setTimeout(() => { button.disabled = false; }, 1000);
+            return;
+        }
+
         if (!blob || !modelId || !text) { setStatus('保存対象の音声データが不完全です。', true); return; }
-        setStatus('R2に音声を保存中...');
+        setStatus('音声を保存中...');
         button.disabled = true;
         try {
             const reader = new FileReader();
@@ -537,16 +607,23 @@
                     });
                     if (!response.ok) {
                         const errorData = await response.json().catch(() => ({ error: response.statusText }));
-                        throw new Error(`R2への保存に失敗: ${errorData.error}`);
+                        throw new Error(errorData.error || "保存に失敗しました");
                     }
-                    const result = await response.json();
-                    setStatus(`音声をR2に保存しました (Key: ${result.key})`);
+                    setStatus(`音声の保存が完了しました。`);
                     const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
                     if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) r2TabButton.click();
-                } catch (err) { console.error('R2 save error:', err); setStatus(err.message, true); } 
-                finally { button.disabled = false; }
+                } catch (err) { 
+                    console.error('Save error:', err);
+                    setStatus(err.message, true);
+                } finally {
+                    button.disabled = false;
+                }
             };
-        } catch (error) { console.error('File reading error:', error); setStatus('ファイルの読み込みに失敗しました。', true); button.disabled = false; }
+        } catch (error) { 
+            console.error('File reading error:', error);
+            setStatus('ファイルの読み込みに失敗しました。', true);
+            button.disabled = false;
+        }
     }
     
     function setupStorageEventListeners() {
