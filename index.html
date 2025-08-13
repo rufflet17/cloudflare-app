@@ -369,36 +369,48 @@
             const r2GalleryWrapper = document.getElementById('r2-gallery-wrapper');
             const r2FilterMineToggle = document.getElementById('r2-filter-mine-toggle');
             currentUser = user;
-            window.currentUser = user; 
+            
             if (user) {
                 loginBtn.style.display = 'none';
                 logoutBtn.style.display = 'block';
                 userDisplayWrapper.style.display = 'flex';
-                fetch('/api/profile').then(res => res.ok ? res.json() : { username: null, is_muted: 0 })
+
+                // プロファイル取得中は保存ボタンを無効化
+                if (saveToR2Btn) saveToR2Btn.disabled = true;
+                if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = true;
+
+                fetch('/api/profile').then(res => res.ok ? res.json() : { username: null, is_muted: 0, is_blocked: 0 })
                 .then(profile => {
-                    userProfile = profile;
+                    Object.assign(userProfile, profile); // オブジェクトのプロパティを更新
                     const displayName = profile.username ? profile.username : (user.displayName || user.email);
                     userInfo.textContent = displayName;
                     userInfo.title = displayName;
                 }).catch(err => {
                     console.error("プロファイル取得エラー:", err);
-                    userProfile = { is_muted: 0 };
+                    Object.assign(userProfile, { username: null, is_muted: 0, is_blocked: 0 });
                     const displayName = user.displayName || user.email;
                     userInfo.textContent = displayName;
                     userInfo.title = displayName;
+                }).finally(() => {
+                    // プロファイル取得完了後、ブロック状態でなければ保存ボタンを有効化
+                    if (userProfile.is_blocked !== 1) {
+                        if (saveToR2Btn) saveToR2Btn.disabled = false;
+                        if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = false;
+                    } else {
+                         setStatus('あなたのアカウントは投稿が制限されています。', true);
+                    }
                 });
+
                 editUsernameBtn.onclick = handleEditUsername;
                 r2GalleryTab.classList.remove('locked-feature');
                 r2GalleryWrapper.classList.remove('locked-feature');
-                if (saveToR2Btn) saveToR2Btn.disabled = false;
-                if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = false;
                 if (r2FilterMineToggle) r2FilterMineToggle.disabled = false;
                 if (typeof loadR2Gallery === 'function' && r2GalleryTab.classList.contains('active')) {
                    loadR2Gallery();
                 }
             } else {
                 currentUser = null;
-                userProfile = { is_muted: 0 };
+                userProfile = { is_muted: 0, is_blocked: 0 };
                 localDataStore.clear();
                 loginBtn.style.display = 'block';
                 logoutBtn.style.display = 'none';
