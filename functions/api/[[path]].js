@@ -1,3 +1,5 @@
+// functions/_middleware.js
+
 // btoa/atobはCloudflare Workersのグローバルスコープで利用可能です。
 
 // --- JWT検証用のヘルパー関数 ---
@@ -213,7 +215,8 @@ async function handleApiRoutes(context) {
     const protectedRoutes = [
         { path: '/api/upload', method: 'POST' },
         { path: '/api/delete/', method: 'DELETE', startsWith: true },
-        { path: '/api/profile', method: 'ANY' }, // プロフィールAPIは全メソッドを保護
+        { path: '/api/profile', method: 'ANY' },
+        { path: '/api/my-profile', method: 'GET' }, // ★ 新しいエンドポイントも保護対象に
     ];
 
     const isProtectedRoute = protectedRoutes.some(route => {
@@ -256,6 +259,11 @@ async function handleApiRoutes(context) {
     if (path === '/api/profile') {
         return handleProfile(request, env, decodedToken);
     }
+    // ★ 新しいエンドポイントのハンドラー呼び出し
+    if (path === '/api/my-profile' && method === 'GET') {
+        return handleMyProfile(request, env, decodedToken);
+    }
+
 
     return new Response("API Route Not Found", { status: 404 });
 }
@@ -464,4 +472,32 @@ async function handleProfile(request, env, decodedToken) {
     }
 
     return new Response('Method Not Allowed', { status: 405 });
+}
+
+// ★ 新しいAPIハンドラー
+async function handleMyProfile(request, env, decodedToken) {
+    // decodedTokenは上位のハンドラーで検証済み
+    const userId = decodedToken.sub;
+    const googleDisplayName = decodedToken.name || null;
+
+    try {
+        const stmt = env.MY_D1_DATABASE.prepare(
+            `SELECT username FROM user_profiles WHERE user_id = ?`
+        );
+        const profile = await stmt.bind(userId).first();
+
+        const responsePayload = {
+            userId: userId,
+            // カスタム表示名があればそれを、なければGoogleの表示名を、それもなければnullを返す
+            username: profile ? profile.username : (googleDisplayName || '匿名ユーザー')
+        };
+        
+        return new Response(JSON.stringify(responsePayload), {
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+    } catch (error) {
+        console.error("Failed to fetch my-profile:", error);
+        return new Response(JSON.stringify({ error: "プロファイル情報の取得に失敗しました。" }), { status: 500 });
+    }
 }

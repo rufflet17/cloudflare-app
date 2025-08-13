@@ -310,7 +310,7 @@
             appId: "1:1067746798695:web:76bc39f08b51fc512c38c2",
             measurementId: "G-W5TEENZEJ0"
         };
-        const PROTECTED_API_PATHS = ['/api/upload', '/api/delete', '/api/profile'];
+        const PROTECTED_API_PATHS = ['/api/upload', '/api/delete', '/api/profile', '/api/my-profile'];
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
         let currentUser = null;
@@ -615,6 +615,7 @@
         }
     }
     
+    // ★★★ 修正されたテスト投稿関数 ★★★
     async function saveAudioAsTestPost(blob, modelId, text, button) {
         if (!blob || !modelId || !text) {
             setStatus('テスト投稿の対象データが不完全です。', true);
@@ -623,47 +624,60 @@
         setStatus('テスト投稿を準備中...');
         button.disabled = true;
 
+        let userId, username;
+
         try {
+            // ログイン状態に応じてユーザー情報を取得
+            if (window.currentUser) {
+                // ログイン済みの場合は、バックエンドに問い合わせる
+                const response = await fetch('/api/my-profile');
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({error: 'サーバーからプロファイルを取得できませんでした。'}));
+                    throw new Error(err.error);
+                }
+                const myProfile = await response.json();
+                userId = myProfile.userId;
+                username = myProfile.username;
+            } else {
+                // 未ログインの場合
+                userId = 'local-user';
+                username = '自分 (未ログイン)';
+            }
+        
+            // FileReaderを使ってBase64に変換
             const reader = new FileReader();
             reader.readAsDataURL(blob);
             reader.onloadend = () => {
-                try {
-                    const base64Audio = reader.result.split(',')[1];
-                    const testPosts = getTestPostsFromSession();
-                    
-                    const currentUser = window.currentUser;
-                    const userInfoEl = document.getElementById('user-info');
-                    const username = (currentUser && userProfile) ? userProfile.username : (currentUser ? (currentUser.displayName || '匿名ユーザー') : '自分 (未ログイン)');
+                const base64Audio = reader.result.split(',')[1];
+                const testPosts = getTestPostsFromSession();
+                
+                const newPost = {
+                    r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+                    model_name: modelId,
+                    text_content: text,
+                    user_id: userId,
+                    username: username,
+                    audio_base64: base64Audio,
+                    content_type: blob.type,
+                    is_test_post: true,
+                    created_at: new Date().toISOString()
+                };
 
-                    const newPost = {
-                        r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-                        model_name: modelId,
-                        text_content: text,
-                        user_id: currentUser ? currentUser.uid : 'local-user',
-                        username: username,
-                        audio_base64: base64Audio,
-                        content_type: blob.type,
-                        is_test_post: true,
-                        created_at: new Date().toISOString() // タイムスタンプを追加
-                    };
-
-                    testPosts.unshift(newPost);
-                    sessionStorage.setItem('testPosts', JSON.stringify(testPosts));
-                    setStatus('テスト投稿をセッションに保存しました。');
-                    
-                    const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
-                    if (r2TabButton) r2TabButton.click();
-                } catch (err) {
-                     console.error('Error during test post creation:', err);
-                     setStatus('テスト投稿の作成中にエラーが発生しました。', true);
-                } finally {
-                    button.disabled = false;
-                }
+                testPosts.unshift(newPost);
+                sessionStorage.setItem('testPosts', JSON.stringify(testPosts));
+                setStatus('テスト投稿をセッションに保存しました。');
+                
+                const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
+                if (r2TabButton) r2TabButton.click();
             };
-            reader.onerror = () => { throw new Error("ファイルの読み込みに失敗しました。"); };
+            reader.onerror = () => {
+                throw new Error("ファイルの読み込みに失敗しました。");
+            };
+
         } catch (error) {
             console.error('Test post save error:', error);
-            setStatus(error.message, true);
+            setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true);
+        } finally {
             button.disabled = false;
         }
     }
