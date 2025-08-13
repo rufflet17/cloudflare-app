@@ -123,7 +123,14 @@
         #add-first-card-btn { background-color: var(--primary-color); }
         #r2-filter-status { display: none; padding: 8px 12px; margin-bottom: 1rem; border-radius: 4px; background-color: #e2e3e5; text-align: center; font-size: 0.9em; }
         #r2-filter-status button { background: none; border: none; color: var(--primary-color); text-decoration: underline; cursor: pointer; padding: 0 4px; font-size: inherit; }
-        .card-owner-info { font-weight: bold; margin: 0; word-break: break-all; }
+        .card-owner-info {
+            font-weight: bold;
+            margin: 0;
+            word-break: break-all;
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+        }
         .card-owner-info .is-own { font-size: 0.8em; color: var(--primary-color); }
         @media (max-width: 768px) {
             .container-wrapper { position: static; transform: none; width: auto; margin: 1rem; padding: 1rem; cursor: default; }
@@ -331,11 +338,14 @@
         async function handleEditUsername() {
             if (!currentUser) return;
             const currentName = userProfile ? userProfile.username : (currentUser.displayName || '');
-            const newName = prompt("新しい表示名を入力してください（20文字以内）:", currentName);
+            const newName = prompt("新しい表示名を入力してください（10文字以内）:", currentName);
             if (newName === null) { return; }
             const trimmedName = newName.trim();
             if (trimmedName === "") { alert("表示名は空にできません。"); return; }
-            if (trimmedName.length > 20) { alert("表示名は20文字以内で入力してください。"); return; }
+            if (trimmedName.length > 10) {
+                alert("表示名は10文字以内で入力してください。");
+                return;
+            }
             try {
                  const response = await fetch('/api/profile', {
                     method: 'POST',
@@ -454,7 +464,10 @@
             card.innerHTML = `
                 <div class="card-main">
                     <div style="margin-bottom: 8px;">
-                        <p class="card-owner-info">${modelDisplayName}　${ownerUsername}${ownerIndicator}</p>
+                        <div class="card-owner-info">
+                            <span>${modelDisplayName}</span>
+                            <span>${ownerUsername}${ownerIndicator}</span>
+                        </div>
                         <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p>
                     </div>
                     <audio controls preload="none" src="/api/get/${encodeURIComponent(file.r2_key)}"></audio>
