@@ -17,6 +17,7 @@
             --danger-color: #dc3545; --danger-hover-color: #c82333;
             --info-color: #17a2b8; --info-hover-color: #138496;
             --r2-save-color: #ff8c00; --r2-save-hover-color: #cc7000;
+            --test-post-color: #6f42c1; --test-post-hover-color: #59369a;
         }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; line-height: 1.6; background-size: cover; background-position: center center; background-repeat: no-repeat; background-attachment: fixed; position: relative; min-height: 100vh; }
         body.no-transition, body.no-transition * { transition: none !important; }
@@ -56,6 +57,8 @@
         #save-to-r2-btn { background-color: var(--r2-save-color); }
         #save-to-r2-btn:hover:not(:disabled), #save-preview-to-r2-btn:hover:not(:disabled) { background-color: var(--r2-save-hover-color); }
         #save-preview-to-r2-btn { background-color: var(--r2-save-color); }
+        #test-post-btn { background-color: var(--test-post-color); }
+        #test-post-btn:hover:not(:disabled) { background-color: var(--test-post-hover-color); }
         #status { margin-top: 1.5rem; padding: 10px; border-radius: 4px; min-height: 1.5em; font-weight: bold; word-break: break-word; }
         .status-info { background-color: #e7f3fe; color: #004085; }
         .status-error { background-color: #f8d7da; color: #721c24; }
@@ -68,6 +71,7 @@
             min-height: 100px;
         }
         .player-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; background-color: #f9f9f9; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+        .player-card.is-test-post { border-left: 4px solid var(--test-post-color); }
         .player-card.is-error { background-color: #f8d7da; border-color: #f5c6cb; }
         .card-main { flex-grow: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
         .card-main audio { width: 100%; max-height: 40px; }
@@ -79,7 +83,7 @@
         .icon-btn:disabled { color: #ccc; border-color: #eee; background-color: #fafafa; cursor: not-allowed; }
         .download-link.icon-btn { text-decoration: none; }
         .download-link.icon-btn:hover { color: var(--success-color); border-color: var(--success-color); }
-        .btn-delete:hover, .btn-delete-r2:hover { color: var(--danger-color); border-color: var(--danger-color); }
+        .btn-delete:hover, .btn-delete-r2:hover, .btn-delete-test:hover { color: var(--danger-color); border-color: var(--danger-color); }
         .btn-view-user-files:hover { color: var(--info-color); border-color: var(--info-color); }
         .card-status { font-size: 0.9em; font-weight: bold; min-height: 1.2em; color: var(--primary-color); }
         .card-text-wrapper { display: flex; align-items: baseline; gap: 8px; }
@@ -132,6 +136,12 @@
             align-items: baseline;
         }
         .card-owner-info .is-own { font-size: 0.8em; color: var(--primary-color); }
+        .test-post-indicator {
+            font-size: 0.8em;
+            font-weight: bold;
+            color: var(--test-post-color);
+            margin-left: 8px;
+        }
         @media (max-width: 768px) {
             .container-wrapper { position: static; transform: none; width: auto; margin: 1rem; padding: 1rem; cursor: default; }
             .container-header { padding: 0; border-bottom: none; cursor: default; }
@@ -216,6 +226,7 @@
                     <div class="button-group">
                         <button id="download-combined-btn" style="display: none;">この音声をダウンロード</button>
                         <button id="save-to-r2-btn" style="display: none;">R2に保存</button>
+                        <button id="test-post-btn" style="display: none;">テスト投稿</button>
                     </div>
                 </div>
             </div>
@@ -279,7 +290,7 @@
                  <div class="setting-item"> <label for="model-select-bg">設定対象の音声モデル:</label><select id="model-select-bg"></select> </div> <div id="settings-area"> <div class="setting-item"><label for="display-name-input">現在のモデルの表示名:</label><div class="display-name-editor"><input type="text" id="display-name-input" placeholder="表示名を入力"><button id="save-display-name-btn">保存</button></div></div> <div class="setting-item"> <label>画像ギャラリー (現在のモデル用):</label> <div id="gallery-container"></div> <button id="upload-image-btn">ファイルから選択 (画像/ZIP)</button> <input type="file" id="image-upload-input" accept="image/*,application/zip,application/x-zip-compressed" style="display: none;"> </div> <div id="image-adjust-panel"> <div class="setting-item"> <label for="bg-adjust-toggle" class="toggle-switch-label"> <span>背景のインタラクティブ調整</span> <input type="checkbox" id="bg-adjust-toggle" class="toggle-switch"> <span class="toggle-slider"></span> </label> </div> </div> </div>
             </div>
             <div id="tab-ui" class="tab-content">
-                <p style="font-size: 0.9em; color: #666; margin-top: 0; margin-bottom: 1.5rem;">UIコンテナ上部をドラッグして位置を調整できます。</p> <div class="setting-item"><label for="format-select">音声フォーマット:</label><select id="format-select"><option value="mp3" selected>MP3</option><option value="wav">WAV</option><option value="flac">FLAC</option><option value="opus">Opus</option></select></div> <div class="setting-item"><label>UIコンテナの横幅 (px)</label><div class="slider-container"><input type="range" id="ui-width-slider" min="500" max="1200" step="10"><input type="number" id="ui-width-input"></div></div> <div class="setting-item"><label>UIコンテナの透過度</label><div class="slider-container"><input type="range" id="ui-opacity-slider" min="0.5" max="1" step="0.01"><input type="number" id="ui-opacity-input"></div></div> <div class="setting-item"><button id="export-all-settings-btn" class="btn-reset btn-info">全設定をZIPでエクスポート</button></div> <div class="setting-item"><button id="reset-ui-btn" class="btn-reset">UI設定をデフォルトに戻す</button></div> <div class="setting-item"><button id="reset-all-bgs-btn" class="btn-reset btn-danger">全てのモデルの背景・表示名をリセット</button></div>
+                <p style="font-size: 0.9em; color: #666; margin-top: 0; margin-bottom: 1.5rem;">UIコンテナ上部をドラッグして位置を調整できます。</p> <div class="setting-item"><label for="format-select">音声フォーマット:</label><select id="format-select"><option value="mp3" selected>MP3</option><option value="wav">WAV</option><option value="flac">FLAC</option><option value="opus">Opus</option></select></div> <div class="setting-item"><label>UIコンテナの横幅 (px)</label><div class="slider-container"><input type="range" id="ui-width-slider" min="500" max="1200" step="10"><input type="number" id="ui-width-input"></div></div> <div class="setting-item"><label>UIコンテナの透過度</label><div class="slider-container"><input type="range" id="ui-opacity-slider" min="0.5" max="1" step="0.01"><input type="number" id="ui-opacity-input"></div></div> <div class="setting-item"><button id="export-all-settings-btn" class="btn-reset btn-info">全設定をZIPでエクスポート</button></div> <div class="setting-item"><button id="reset-ui-btn" class="btn-reset">UI設定をデフォルトに戻す</button></div> <div class="setting-item"><button id="clear-test-posts-btn" class="btn-reset btn-danger">全てのテスト投稿を削除</button></div> <div class="setting-item"><button id="reset-all-bgs-btn" class="btn-reset btn-danger">全てのモデルの背景・表示名をリセット</button></div>
             </div>
         </div>
     </div>
@@ -438,42 +449,68 @@
     })();
     
     // --- R2ストレージ関連関数 ---
+    const TEST_POSTS_KEY = 'testAudioPosts';
+
     function renderR2Gallery(files) {
         if (!files || files.length === 0) {
-             r2GalleryContainer.innerHTML = r2GalleryState.currentPage === 1 
+             const hasFilters = r2GalleryState.modelId || r2GalleryState.searchText || r2GalleryState.userId || r2GalleryState.filter === 'mine';
+             r2GalleryContainer.innerHTML = (r2GalleryState.currentPage === 1 && hasFilters)
                 ? '<p>条件に一致する音声はありません。</p>'
-                : '<p>これ以上音声はありません。</p>';
+                : '<p>音声がありません。「音声合成」タブから作成するか、フィルターを解除してください。</p>';
              return;
         }
         r2GalleryContainer.innerHTML = '';
         const currentUid = window.currentUser ? window.currentUser.uid : null;
+        
         files.forEach(file => {
             const card = document.createElement('div');
             card.className = 'player-card';
-            card.dataset.fileKey = file.r2_key;
-            card.dataset.userId = file.user_id;
+
+            const isTestPost = file.isTestPost;
+            if (isTestPost) {
+                card.classList.add('is-test-post');
+                card.dataset.testPostId = file.id;
+            } else {
+                card.dataset.fileKey = file.r2_key;
+                card.dataset.userId = file.user_id;
+            }
+
             const modelDisplayName = getModelData(file.model_name).displayName || file.model_name;
-            const formatConfig = getFormatConfigByContentType(`audio/${file.r2_key.split('.').pop()}`);
-            const downloadFilename = createSafeFileName(file.model_name, file.text_content, formatConfig.extension);
             const isOwnFile = currentUid && file.user_id === currentUid;
-            const ownerUsername = file.username || '匿名ユーザー';
+            const ownerUsername = file.username || (isTestPost ? (document.getElementById('user-info').textContent || 'テスト') : '匿名ユーザー');
             const ownerIndicator = isOwnFile ? ` <span class="is-own">(自分)</span>` : '';
-            const actionButton = isOwnFile
-                ? `<button class="icon-btn btn-delete-r2" title="削除">🗑️</button>`
-                : `<button class="icon-btn btn-view-user-files" title="この投稿者の他の音声">👤</button>`;
+            const testIndicator = isTestPost ? `<span class="test-post-indicator">[テスト投稿]</span>` : '';
+
+            const audioSrc = isTestPost ? file.audioSrc : `/api/get/${encodeURIComponent(file.r2_key)}`;
+            
+            let actionButton, downloadLink;
+
+            if (isTestPost) {
+                actionButton = `<button class="icon-btn btn-delete-test" title="テスト投稿を削除">🗑️</button>`;
+                downloadLink = `<a href="${file.audioSrc}" download="${createSafeFileName(file.model_name, file.text_content, 'mp3')}" class="icon-btn download-link" title="ダウンロード">📥</a>`;
+            } else {
+                actionButton = isOwnFile
+                    ? `<button class="icon-btn btn-delete-r2" title="削除">🗑️</button>`
+                    : `<button class="icon-btn btn-view-user-files" title="この投稿者の他の音声">👤</button>`;
+                
+                const formatConfig = getFormatConfigByContentType(`audio/${file.r2_key.split('.').pop()}`);
+                const downloadFilename = createSafeFileName(file.model_name, file.text_content, formatConfig.extension);
+                downloadLink = `<a href="/api/get/${encodeURIComponent(file.r2_key)}" download="${downloadFilename}" class="icon-btn download-link" title="ダウンロード">📥</a>`;
+            }
+
             card.innerHTML = `
                 <div class="card-main">
                     <div style="margin-bottom: 8px;">
                         <div class="card-owner-info">
                             <span>${modelDisplayName}</span>
-                            <span>${ownerUsername}${ownerIndicator}</span>
+                            <span>${ownerUsername}${ownerIndicator}${testIndicator}</span>
                         </div>
                         <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p>
                     </div>
-                    <audio controls preload="none" src="/api/get/${encodeURIComponent(file.r2_key)}"></audio>
+                    <audio controls preload="none" src="${audioSrc}"></audio>
                 </div>
                 <div class="player-actions">
-                     <a href="/api/get/${encodeURIComponent(file.r2_key)}" download="${downloadFilename}" class="icon-btn download-link" title="ダウンロード">📥</a>
+                     ${downloadLink}
                      ${actionButton}
                 </div>
             `;
@@ -494,19 +531,26 @@
         }
     }
 
-    function updateR2PaginationUI() {
-        r2PaginationControls.style.display = 'flex';
-        r2PageInfo.textContent = `ページ ${r2GalleryState.currentPage}`;
-        r2PrevPageBtn.disabled = r2GalleryState.currentPage <= 1 || r2GalleryState.isLoading;
-        r2NextPageBtn.disabled = !r2GalleryState.hasNextPage || r2GalleryState.isLoading;
+    function updateR2PaginationUI(hasServerFiles) {
+        // テスト投稿はページネーションの対象外なので、サーバーからのファイルがある場合のみ表示
+        if (hasServerFiles) {
+            r2PaginationControls.style.display = 'flex';
+            r2PageInfo.textContent = `ページ ${r2GalleryState.currentPage}`;
+            r2PrevPageBtn.disabled = r2GalleryState.currentPage <= 1 || r2GalleryState.isLoading;
+            r2NextPageBtn.disabled = !r2GalleryState.hasNextPage || r2GalleryState.isLoading;
+        } else {
+            r2PaginationControls.style.display = 'none';
+        }
     }
 
     async function loadR2Gallery() {
         if (r2GalleryState.isLoading) return;
         r2GalleryState.isLoading = true;
         r2GalleryContainer.innerHTML = '<p>読み込み中...</p>';
-        updateR2PaginationUI();
+        updateR2PaginationUI(false);
         updateR2FilterStatusUI();
+        
+        let serverFiles = [];
         try {
             const params = new URLSearchParams({ page: r2GalleryState.currentPage, filter: r2GalleryState.filter });
             if (r2GalleryState.modelId) params.append('modelId', r2GalleryState.modelId);
@@ -517,18 +561,52 @@
                 const errData = await response.json().catch(() => ({error: 'サーバーエラー'}));
                 throw new Error(errData.error || '一覧の取得に失敗しました。');
             }
-            const filesFromServer = await response.json();
-            r2GalleryState.hasNextPage = filesFromServer.length === 10;
-            renderR2Gallery(filesFromServer);
+            serverFiles = await response.json();
+            r2GalleryState.hasNextPage = serverFiles.length === 10;
         } catch (error) {
             console.error('R2 gallery load error:', error);
-            r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`;
+            r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">サーバーからの音声一覧の取得に失敗しました: ${error.message}</p>`;
             r2GalleryState.hasNextPage = false;
-        } finally {
-            r2GalleryState.isLoading = false;
-            updateR2PaginationUI();
         }
+
+        const testPosts = JSON.parse(sessionStorage.getItem(TEST_POSTS_KEY)) || [];
+        // テスト投稿はフィルターの影響を受けずに常に表示
+        const allFiles = [...testPosts, ...serverFiles];
+        
+        if (allFiles.length > 0) {
+           renderR2Gallery(allFiles);
+        } else {
+           r2GalleryContainer.innerHTML = '<p>表示できる音声がありません。</p>';
+        }
+
+        r2GalleryState.isLoading = false;
+        updateR2PaginationUI(serverFiles.length > 0 || r2GalleryState.hasNextPage);
     }
+    
+    function createTestPost() {
+        if (!currentCombinedAudioBlob || !currentCombinedAudioInfo) {
+            setStatus('テスト投稿する音声がありません。', true);
+            return;
+        }
+        const testPosts = JSON.parse(sessionStorage.getItem(TEST_POSTS_KEY)) || [];
+        
+        const newPost = {
+            id: Date.now(),
+            isTestPost: true,
+            model_name: getCurrentModelId(),
+            text_content: currentCombinedAudioInfo.text,
+            audioSrc: URL.createObjectURL(currentCombinedAudioBlob),
+            user_id: window.currentUser ? window.currentUser.uid : 'local-user',
+            username: document.getElementById('user-info').textContent || 'テストユーザー'
+        };
+        
+        testPosts.unshift(newPost); // 配列の先頭に追加
+        sessionStorage.setItem(TEST_POSTS_KEY, JSON.stringify(testPosts));
+        
+        setStatus('テスト投稿を作成しました。「保存済み音声」タブで確認できます。');
+        document.querySelector('.tab-button[data-tab="r2-gallery"]').click();
+    }
+
 
     async function saveAudioToR2(blob, modelId, text, button) {
         if (!blob || !modelId || !text) { setStatus('保存対象の音声データが不完全です。', true); return; }
@@ -561,6 +639,19 @@
     function setupStorageEventListeners() {
         saveToR2Btn.addEventListener('click', () => saveAudioToR2(currentCombinedAudioBlob, getCurrentModelId(), currentCombinedAudioInfo.text, saveToR2Btn));
         savePreviewToR2Btn.addEventListener('click', () => saveAudioToR2(currentPreviewAudioBlob, getCurrentModelId(), currentPreviewAudioInfo.text, savePreviewToR2Btn));
+        
+        // 新しいボタンのイベントリスナー
+        testPostBtn.addEventListener('click', createTestPost);
+        clearTestPostsBtn.addEventListener('click', () => {
+            if (confirm('すべてのテスト投稿を削除しますか？この操作は元に戻せません。')) {
+                sessionStorage.removeItem(TEST_POSTS_KEY);
+                setStatus('すべてのテスト投稿を削除しました。');
+                if (document.querySelector('.tab-button[data-tab="r2-gallery"]').classList.contains('active')) {
+                    loadR2Gallery();
+                }
+            }
+        });
+
         refreshR2GalleryBtn.addEventListener('click', () => { r2GalleryState.currentPage = 1; r2GalleryState.userId = ''; loadR2Gallery(); });
         r2FilterMineToggle.addEventListener('change', () => { r2GalleryState.filter = r2FilterMineToggle.checked ? 'mine' : 'all'; r2GalleryState.currentPage = 1; r2GalleryState.userId = ''; loadR2Gallery(); });
         const handleSearch = () => { r2GalleryState.modelId = r2SearchModelSelect.value; r2GalleryState.searchText = r2SearchTextInput.value; r2GalleryState.currentPage = 1; r2GalleryState.userId = ''; loadR2Gallery(); };
@@ -568,9 +659,11 @@
         r2SearchTextInput.addEventListener('input', handleSearch);
         r2PrevPageBtn.addEventListener('click', () => { if (r2GalleryState.currentPage > 1) { r2GalleryState.currentPage--; loadR2Gallery(); } });
         r2NextPageBtn.addEventListener('click', () => { if (r2GalleryState.hasNextPage) { r2GalleryState.currentPage++; loadR2Gallery(); } });
+        
         r2GalleryContainer.addEventListener('click', async (e) => {
             const card = e.target.closest('.player-card');
             if (!card) return;
+
             if (e.target.closest('.btn-delete-r2')) {
                 const fileKey = card.dataset.fileKey;
                 const downloadLink = card.querySelector('.download-link');
@@ -586,6 +679,17 @@
                         e.target.closest('.btn-delete-r2').disabled = false;
                     }
                 }
+            } else if (e.target.closest('.btn-delete-test')) {
+                const testPostId = card.dataset.testPostId;
+                let testPosts = JSON.parse(sessionStorage.getItem(TEST_POSTS_KEY)) || [];
+                // 対応するBlob URLをメモリから解放
+                const postToDelete = testPosts.find(p => p.id == testPostId);
+                if (postToDelete && postToDelete.audioSrc) {
+                    URL.revokeObjectURL(postToDelete.audioSrc);
+                }
+                const updatedPosts = testPosts.filter(p => p.id != testPostId);
+                sessionStorage.setItem(TEST_POSTS_KEY, JSON.stringify(updatedPosts));
+                loadR2Gallery(); // ビューを更新
             } else if (e.target.closest('.btn-view-user-files')) {
                 r2GalleryState.userId = card.dataset.userId;
                 r2GalleryState.currentPage = 1;
