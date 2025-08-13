@@ -545,6 +545,7 @@
             if (r2GalleryState.modelId) params.append('modelId', r2GalleryState.modelId);
             if (r2GalleryState.searchText) params.append('searchText', r2GalleryState.searchText);
             if (r2GalleryState.userId) params.append('userId', r2GalleryState.userId);
+            
             const response = await fetch(`/api/list?${params.toString()}`);
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({error: 'サーバーエラー'}));
@@ -559,9 +560,9 @@
                 model_name: data.modelId,
                 text_content: data.text,
                 created_at: data.createdAt,
-                username: window.userProfile.username || '匿名ユーザー'
+                username: (window.userProfile && window.userProfile.username) ? window.userProfile.username : '匿名ユーザー'
             })).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
-
+            
             const combinedFiles = [...localFiles, ...filesFromServer];
             renderR2Gallery(combinedFiles);
 
@@ -581,11 +582,13 @@
             const localKey = `local-${crypto.randomUUID()}`;
             window.localDataStore.set(localKey, { blob, modelId, text, createdAt: new Date().toISOString() });
             setStatus(`音声の保存が完了しました。`);
-
+            
             const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
             if (r2TabButton.classList.contains('active')) {
+                // If already on the gallery tab, just reload it
                 loadR2Gallery();
             } else {
+                // Otherwise, switch to the gallery tab
                 r2TabButton.click();
             }
             setTimeout(() => { button.disabled = false; }, 1000);
