@@ -209,13 +209,23 @@ async function handleApiRoutes(context) {
 
     let decodedToken = null;
 
-    const filter = url.searchParams.get('filter');
-    const isProtectedRoute = 
-        (path === '/api/upload' && method === 'POST') ||
-        (path.startsWith('/api/delete/') && method === 'DELETE') ||
-        (path === '/api/list' && filter === 'mine');
+    // 保護対象APIのリスト
+    const protectedRoutes = [
+        { path: '/api/upload', method: 'POST' },
+        { path: '/api/delete/', method: 'DELETE', startsWith: true },
+        { path: '/api/profile', method: 'ANY' }, // プロフィールAPIは全メソッドを保護
+    ];
 
-    if (isProtectedRoute) {
+    const isProtectedRoute = protectedRoutes.some(route => {
+        const pathMatch = route.startsWith ? path.startsWith(route.path) : path === route.path;
+        const methodMatch = route.method === 'ANY' || route.method === method;
+        return pathMatch && methodMatch;
+    });
+
+    const filter = url.searchParams.get('filter');
+    const needsAuthForFilter = (path === '/api/list' && filter === 'mine');
+
+    if (isProtectedRoute || needsAuthForFilter) {
         const authHeader = request.headers.get('Authorization');
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
             return new Response(JSON.stringify({ error: "認証が必要です。" }), { status: 401, headers: { 'Content-Type': 'application/json' } });
@@ -242,6 +252,9 @@ async function handleApiRoutes(context) {
     if (path.startsWith('/api/get/') && method === 'GET') {
         const key = decodeURIComponent(url.pathname.substring('/api/get/'.length));
         return handleGet(request, env, key);
+    }
+    if (path === '/api/profile') {
+        return handleProfile(request, env, decodedToken);
     }
 
     return new Response("API Route Not Found", { status: 404 });
@@ -297,67 +310,69 @@ async function handleList(request, env, decodedToken) {
     try {
         const url = new URL(request.url);
         const params = url.searchParams;
-
-        // 1. 1ページあたりの件数をサーバー側で固定
-        const limit = 10; 
-        
-        // 2. ページ番号を取得し、数値に変換
+        const limit = 10;
         const page = parseInt(params.get('page') || '1', 10);
-        
-        // 3. ページ番号の上限を設定 (例: 100ページ目まで)
-        const MAX_PAGE = 100; 
-        
-        // 4. 不正なページ番号や上限を超えたリクエストを弾く
+        const MAX_PAGE = 100;
+
         if (isNaN(page) || page < 1 || page > MAX_PAGE) {
-            return new Response(JSON.stringify({ error: "無効なページ番号です。" }), { status: 400, headers: { 'Content-Type': 'application/json' }});
+            return new Response(JSON.stringify({ error: "無効なページ番号です。" }), { status: 400 });
         }
-        
+
         const filter = params.get('filter');
         const modelId = params.get('modelId');
         const searchText = params.get('searchText');
         const userId = params.get('userId');
         const offset = (page - 1) * limit;
 
-        let conditions = ["is_deleted = 0"];
+        let conditions = ["a.is_deleted = 0"];
         let bindings = [];
 
         if (userId) {
-            conditions.push("user_id = ?");
+            conditions.push("a.user_id = ?");
             bindings.push(userId);
         } else if (filter === 'mine') {
             if (!decodedToken || !decodedToken.sub) {
-                return new Response(JSON.stringify({ error: "このフィルターには認証が必要です。" }), { status: 401, headers: { 'Content-Type': 'application/json' }});
+                return new Response(JSON.stringify({ error: "このフィルターには認証が必要です。" }), { status: 401 });
             }
-            conditions.push("user_id = ?");
+            conditions.push("a.user_id = ?");
             bindings.push(decodedToken.sub);
         }
 
         if (modelId) {
-            conditions.push("model_name = ?");
+            conditions.push("a.model_name = ?");
             bindings.push(modelId);
         }
         if (searchText) {
-            conditions.push("text_content LIKE ?");
+            conditions.push("a.text_content LIKE ?");
             bindings.push(`%${searchText}%`);
         }
-        
+
         const whereClause = `WHERE ${conditions.join(' AND ')}`;
-        
+
         const query = `
-            SELECT r2_key, user_id, model_name, text_content, created_at 
-            FROM audios 
-            ${whereClause} 
-            ORDER BY created_at DESC 
-            LIMIT ? OFFSET ?`;
+            SELECT
+                a.r2_key,
+                a.user_id,
+                a.model_name,
+                a.text_content,
+                a.created_at,
+                p.username
+            FROM audios AS a
+            LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
+            ${whereClause}
+            ORDER BY a.created_at DESC
+            LIMIT ? OFFSET ?
+        `;
         bindings.push(limit, offset);
 
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
+        
         return new Response(JSON.stringify(results || []), {
             headers: { "Content-Type": "application/json" },
         });
     } catch (error) {
         console.error("List failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to list audio files." }), { status: 500, headers: { 'Content-Type': 'application/json' }});
+        return new Response(JSON.stringify({ error: "Failed to list audio files." }), { status: 500 });
     }
 }
 
@@ -381,7 +396,7 @@ async function handleGet(request, env, key) {
         return new Response(object.body, { headers });
     } catch (error) {
         console.error("Get failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to get audio file." }), { status: 500, headers: { 'Content-Type': 'application/json' }});
+        return new Response(JSON.stringify({ error: "Failed to get audio file." }), { status: 500 });
     }
 }
 
@@ -398,12 +413,55 @@ async function handleLogicalDelete(request, env, decodedToken, key) {
         const { meta } = await stmt.bind(key, user.uid).run();
 
         if (meta.changes === 0) {
-            return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404, headers: { 'Content-Type': 'application/json' }});
+            return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404 });
         }
         
         return new Response(JSON.stringify({ success: true, key: key }), { status: 200, headers: { 'Content-Type': 'application/json' }});
     } catch (error) {
         console.error("Logical delete failed:", error);
-        return new Response(JSON.stringify({ error: "Failed to delete audio file." }), { status: 500, headers: { 'Content-Type': 'application/json' }});
+        return new Response(JSON.stringify({ error: "Failed to delete audio file." }), { status: 500 });
     }
+}
+
+async function handleProfile(request, env, decodedToken) {
+    // decodedToken は isProtectedRoute のチェックで検証済み
+    const userId = decodedToken.sub;
+
+    if (request.method === 'GET') {
+        const stmt = env.MY_D1_DATABASE.prepare(
+            `SELECT username FROM user_profiles WHERE user_id = ?`
+        );
+        const profile = await stmt.bind(userId).first();
+
+        if (!profile) {
+            return new Response(JSON.stringify({ error: "Profile not found" }), { status: 404 });
+        }
+        return new Response(JSON.stringify(profile), { headers: { 'Content-Type': 'application/json' } });
+    }
+
+    if (request.method === 'POST') {
+        try {
+            const { username } = await request.json();
+
+            if (!username || username.trim().length === 0 || username.length > 20) {
+                return new Response(JSON.stringify({ error: "表示名は1文字以上20文字以内で入力してください。" }), { status: 400 });
+            }
+
+            const stmt = env.MY_D1_DATABASE.prepare(
+                `INSERT INTO user_profiles (user_id, username)
+                 VALUES (?, ?)
+                 ON CONFLICT(user_id) DO UPDATE SET
+                   username = excluded.username`
+            );
+            await stmt.bind(userId, username.trim()).run();
+            
+            return new Response(JSON.stringify({ success: true, username: username.trim() }), { status: 200 });
+
+        } catch (e) {
+            console.error("Profile update failed:", e);
+            return new Response(JSON.stringify({ error: "プロフィールの更新に失敗しました。" }), { status: 500 });
+        }
+    }
+
+    return new Response('Method Not Allowed', { status: 405 });
 }

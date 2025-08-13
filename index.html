@@ -123,6 +123,8 @@
         #add-first-card-btn { background-color: var(--primary-color); }
         #r2-filter-status { display: none; padding: 8px 12px; margin-bottom: 1rem; border-radius: 4px; background-color: #e2e3e5; text-align: center; font-size: 0.9em; }
         #r2-filter-status button { background: none; border: none; color: var(--primary-color); text-decoration: underline; cursor: pointer; padding: 0 4px; font-size: inherit; }
+        .card-owner-info { font-weight: bold; margin: 0; word-break: break-all; }
+        .card-owner-info .is-own { font-size: 0.8em; color: var(--primary-color); }
         @media (max-width: 768px) {
             .container-wrapper { position: static; transform: none; width: auto; margin: 1rem; padding: 1rem; cursor: default; }
             .container-header { padding: 0; border-bottom: none; cursor: default; }
@@ -295,10 +297,11 @@
             appId: "1:1067746798695:web:76bc39f08b51fc512c38c2",
             measurementId: "G-W5TEENZEJ0"
         };
-        const PROTECTED_API_PATHS = ['/api/upload', '/api/delete'];
+        const PROTECTED_API_PATHS = ['/api/upload', '/api/delete', '/api/profile'];
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
         let currentUser = null;
+        let userProfile = null; // ユーザープロファイル情報を保持する変数
         async function getIdToken() {
             if (!auth.currentUser) return null;
             try { return await auth.currentUser.getIdToken(true); } 
@@ -327,20 +330,30 @@
         };
         async function handleEditUsername() {
             if (!currentUser) return;
-            const currentName = currentUser.displayName || '';
-            const newName = prompt("新しい表示名を入力してください（10文字以内）:", currentName);
+            const currentName = userProfile ? userProfile.username : (currentUser.displayName || '');
+            const newName = prompt("新しい表示名を入力してください（20文字以内）:", currentName);
             if (newName === null) { return; }
             const trimmedName = newName.trim();
             if (trimmedName === "") { alert("表示名は空にできません。"); return; }
-            if (trimmedName.length > 10) { alert("表示名は10文字以内で入力してください。"); return; }
+            if (trimmedName.length > 20) { alert("表示名は20文字以内で入力してください。"); return; }
             try {
-                await currentUser.updateProfile({ displayName: trimmedName });
-                document.getElementById('user-info').textContent = trimmedName;
-                document.getElementById('user-info').title = trimmedName;
+                 const response = await fetch('/api/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: trimmedName })
+                });
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({ error: 'サーバーエラー' }));
+                    throw new Error(errData.error || '表示名の更新に失敗しました。');
+                }
+                const result = await response.json();
+                userProfile = { username: result.username }; // ローカルのプロファイルを更新
+                document.getElementById('user-info').textContent = result.username;
+                document.getElementById('user-info').title = result.username;
                 alert("表示名を更新しました。");
             } catch (error) {
                 console.error("表示名の更新に失敗しました:", error);
-                alert("エラーが発生しました。表示名を更新できませんでした。");
+                alert(`エラーが発生しました: ${error.message}`);
             }
         }
         function updateUIForAuthState(user) {
@@ -358,9 +371,19 @@
                 loginBtn.style.display = 'none';
                 logoutBtn.style.display = 'block';
                 userDisplayWrapper.style.display = 'flex';
-                const displayName = user.displayName || user.email;
-                userInfo.textContent = displayName;
-                userInfo.title = displayName;
+                // ログイン時にユーザープロファイルを取得
+                fetch('/api/profile').then(res => res.ok ? res.json() : null)
+                .then(profile => {
+                    userProfile = profile;
+                    const displayName = profile ? profile.username : (user.displayName || user.email);
+                    userInfo.textContent = displayName;
+                    userInfo.title = displayName;
+                }).catch(err => {
+                    console.error("プロファイル取得エラー:", err);
+                    const displayName = user.displayName || user.email;
+                    userInfo.textContent = displayName;
+                    userInfo.title = displayName;
+                });
                 editUsernameBtn.onclick = handleEditUsername;
                 r2GalleryTab.classList.remove('locked-feature');
                 r2GalleryWrapper.classList.remove('locked-feature');
@@ -371,6 +394,8 @@
                    loadR2Gallery();
                 }
             } else {
+                currentUser = null;
+                userProfile = null;
                 loginBtn.style.display = 'block';
                 logoutBtn.style.display = 'none';
                 userDisplayWrapper.style.display = 'none';
@@ -421,14 +446,16 @@
             const formatConfig = getFormatConfigByContentType(`audio/${file.r2_key.split('.').pop()}`);
             const downloadFilename = createSafeFileName(file.model_name, file.text_content, formatConfig.extension);
             const isOwnFile = currentUid && file.user_id === currentUid;
-            const ownerIndicator = isOwnFile ? ' <span style="font-size:0.8em; color:var(--primary-color);">(自分)</span>' : '';
+            const ownerUsername = file.username || '匿名ユーザー';
+            const ownerIndicator = isOwnFile ? ` <span class="is-own">(自分)</span>` : '';
             const actionButton = isOwnFile
                 ? `<button class="icon-btn btn-delete-r2" title="削除">🗑️</button>`
                 : `<button class="icon-btn btn-view-user-files" title="この投稿者の他の音声">👤</button>`;
             card.innerHTML = `
                 <div class="card-main">
                     <div style="margin-bottom: 8px;">
-                        <p style="font-weight: bold; margin: 0; word-break: break-all;">${modelDisplayName}${ownerIndicator}</p>
+                        <p class="card-owner-info">${ownerUsername}${ownerIndicator}</p>
+                        <p style="margin: 0; color: #666; font-size: 0.9em; word-break: break-all;">モデル: ${modelDisplayName}</p>
                         <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p>
                     </div>
                     <audio controls preload="none" src="/api/get/${encodeURIComponent(file.r2_key)}"></audio>
