@@ -260,41 +260,24 @@ async function handleApiRoutes(context) {
     return new Response("API Route Not Found", { status: 404 });
 }
 
-
-// --- ミュート（地獄BAN）処理 ---
-async function handleHellbanning(userId, env) {
-    try {
-        const stmt = env.MY_D1_DATABASE.prepare(`SELECT is_muted FROM user_status WHERE user_id = ?`);
-        const userStatus = await stmt.bind(userId).first();
-
-        if (userStatus && userStatus.is_muted === 1) {
-            console.log(`Hellbanning user: ${userId}`);
-            return new Response(JSON.stringify({
-                success: true,
-                key: `dummy-hellban-${crypto.randomUUID()}`
-            }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-        }
-        return null;
-    } catch (error) {
-        console.error("Hellbanning check failed:", error);
-        return null;
-    }
-}
-
 // --- 個別のAPI実装 ---
 
 async function handleUpload(request, env, decodedToken) {
     if (!decodedToken || !decodedToken.sub) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
     const user = { uid: decodedToken.sub };
 
-    const hellbanResponse = await handleHellbanning(user.uid, env);
-    if (hellbanResponse) {
-        return hellbanResponse;
-    }
-
     try {
-        const stmt = env.MY_D1_DATABASE.prepare(`SELECT is_blocked FROM user_status WHERE user_id = ?`);
-        const userStatus = await stmt.bind(user.uid).first();
+        const userStatusStmt = env.MY_D1_DATABASE.prepare(`SELECT is_muted, is_blocked FROM user_status WHERE user_id = ?`);
+        const userStatus = await userStatusStmt.bind(user.uid).first();
+
+        if (userStatus && userStatus.is_muted === 1) {
+            console.log(`Muted user detected: ${user.uid}. Instructing client to cache.`);
+            return new Response(JSON.stringify({ action: "cache" }), { 
+                status: 202, // Accepted: リクエストは受け付けたが、標準とは異なる処理を指示
+                headers: { 'Content-Type': 'application/json' }
+            });
+        }
+
         if (userStatus && userStatus.is_blocked === 1) {
             return new Response(JSON.stringify({ error: "あなたのアカウントは投稿が制限されています。" }), { status: 403 });
         }
@@ -453,7 +436,6 @@ async function handleProfile(request, env, decodedToken) {
     const userId = decodedToken.sub;
 
     if (request.method === 'GET') {
-        // user_profiles と user_status を結合してユーザー情報を取得
         const stmt = env.MY_D1_DATABASE.prepare(
             `SELECT p.username, s.is_blocked, s.is_muted
              FROM user_profiles AS p
@@ -463,13 +445,11 @@ async function handleProfile(request, env, decodedToken) {
         let profile = await stmt.bind(userId).first();
 
         if (!profile) {
-            // プロファイルが存在しない場合でもステータスは取得を試みる
             const statusStmt = env.MY_D1_DATABASE.prepare(`SELECT is_blocked, is_muted FROM user_status WHERE user_id = ?`);
             const status = await statusStmt.bind(userId).first();
             profile = { username: null, ...status };
         }
         
-        // is_muted や is_blocked が null の場合に 0 (false相当) を返すように整形
         const responseProfile = {
             username: profile.username,
             is_blocked: profile.is_blocked || 0,

@@ -438,8 +438,6 @@
         });
         document.getElementById('logout-btn').addEventListener('click', () => auth.signOut());
         auth.onAuthStateChanged(updateUIForAuthState);
-        
-        window.localDataStore = localDataStore;
     })();
     
     // --- R2ストレージ関連関数 ---
@@ -592,34 +590,16 @@
     }
 
     async function saveAudioToR2(blob, modelId, text, button) {
-        button.disabled = true;
-
         if (!currentUser) {
             setStatus('ログイン情報が確認できません。ページをリロードしてください。', true);
-            button.disabled = false;
             return;
         }
-
-        if (userProfile && userProfile.is_muted === 1) {
-            const localKey = `local-${crypto.randomUUID()}`;
-            localDataStore.set(localKey, { blob, modelId, text, createdAt: new Date().toISOString() });
-            setStatus(`音声の保存が完了しました。`);
-            
-            const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
-            if (r2TabButton.classList.contains('active')) {
-                await loadR2Gallery();
-            } else {
-                r2TabButton.click();
-            }
-            button.disabled = false;
-            return;
-        }
-
         if (!blob || !modelId || !text) { 
             setStatus('保存対象の音声データが不完全です。', true);
-            button.disabled = false;
             return;
         }
+
+        button.disabled = true;
         setStatus('音声を保存中...');
         
         try {
@@ -636,11 +616,30 @@
                 body: JSON.stringify({ modelId: modelId, text: text, audioBase64: base64Audio, contentType: blob.type })
             });
 
+            // --- 地獄BAN処理 ---
+            if (response.status === 202) {
+                const data = await response.json();
+                if (data.action === 'cache') {
+                    const localKey = `local-${crypto.randomUUID()}`;
+                    localDataStore.set(localKey, { blob, modelId, text, createdAt: new Date().toISOString() });
+                    setStatus(`音声の保存が完了しました。`);
+                    
+                    const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
+                    if (r2TabButton.classList.contains('active')) {
+                        await loadR2Gallery();
+                    } else {
+                        r2TabButton.click();
+                    }
+                    return; // 処理をここで終了
+                }
+            }
+            
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({ error: response.statusText }));
                 throw new Error(errorData.error || "保存に失敗しました");
             }
 
+            // --- 通常の成功処理 ---
             setStatus(`音声の保存が完了しました。`);
             const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
             if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) {
