@@ -262,30 +262,21 @@ async function handleApiRoutes(context) {
 
 
 // --- ミュート（地獄BAN）処理 ---
-/**
- * ユーザーがミュート（地獄BAN）されているかチェックし、対象であればダミーの成功レスポンスを返す。
- * @param {string} userId - チェック対象のユーザーID
- * @param {object} env - Cloudflare環境変数
- * @returns {Response | null} - ミュート対象であればResponseオブジェクト、対象でなければnull
- */
 async function handleHellbanning(userId, env) {
     try {
         const stmt = env.MY_D1_DATABASE.prepare(`SELECT is_muted FROM user_status WHERE user_id = ?`);
         const userStatus = await stmt.bind(userId).first();
 
         if (userStatus && userStatus.is_muted === 1) {
-            // ミュートされている場合、D1/R2への書き込みは行わず、ダミーの成功レスポンスを返す
             console.log(`Hellbanning user: ${userId}`);
             return new Response(JSON.stringify({
                 success: true,
-                key: `dummy-hellban-${crypto.randomUUID()}` // キーもダミー
+                key: `dummy-hellban-${crypto.randomUUID()}`
             }), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }
-        // ミュートされていない場合はnullを返し、通常の処理を続行させる
         return null;
     } catch (error) {
         console.error("Hellbanning check failed:", error);
-        // このチェックでエラーが発生した場合は、安全のために通常の処理に進める
         return null;
     }
 }
@@ -296,25 +287,18 @@ async function handleUpload(request, env, decodedToken) {
     if (!decodedToken || !decodedToken.sub) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
     const user = { uid: decodedToken.sub };
 
-    // --- ここからが変更点 ---
-    // 1. まず地獄BANのチェックを行う
     const hellbanResponse = await handleHellbanning(user.uid, env);
     if (hellbanResponse) {
-        // もし`handleHellbanning`がResponseオブジェクトを返した場合（＝ミュート対象だった場合）、
-        // そのダミーレスポンスをそのまま返し、以降の処理を中断する。
         return hellbanResponse;
     }
-    // --- ここまでが変更点 ---
 
     try {
-        // 2. 次に通常のブロック状態をチェック (これは変更なし)
         const stmt = env.MY_D1_DATABASE.prepare(`SELECT is_blocked FROM user_status WHERE user_id = ?`);
         const userStatus = await stmt.bind(user.uid).first();
         if (userStatus && userStatus.is_blocked === 1) {
             return new Response(JSON.stringify({ error: "あなたのアカウントは投稿が制限されています。" }), { status: 403 });
         }
         
-        // 3. 通常のアップロード処理 (これは変更なし)
         const { modelId, text, audioBase64, contentType } = await request.json();
         if (!modelId || !text || !audioBase64 || !contentType) {
             return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
@@ -466,19 +450,33 @@ async function handleLogicalDelete(request, env, decodedToken, key) {
 }
 
 async function handleProfile(request, env, decodedToken) {
-    // decodedToken は isProtectedRoute のチェックで検証済み
     const userId = decodedToken.sub;
 
     if (request.method === 'GET') {
+        // user_profiles と user_status を結合してユーザー情報を取得
         const stmt = env.MY_D1_DATABASE.prepare(
-            `SELECT username FROM user_profiles WHERE user_id = ?`
+            `SELECT p.username, s.is_blocked, s.is_muted
+             FROM user_profiles AS p
+             LEFT JOIN user_status AS s ON p.user_id = s.user_id
+             WHERE p.user_id = ?`
         );
-        const profile = await stmt.bind(userId).first();
+        let profile = await stmt.bind(userId).first();
 
         if (!profile) {
-            return new Response(JSON.stringify({ error: "Profile not found" }), { status: 404 });
+            // プロファイルが存在しない場合でもステータスは取得を試みる
+            const statusStmt = env.MY_D1_DATABASE.prepare(`SELECT is_blocked, is_muted FROM user_status WHERE user_id = ?`);
+            const status = await statusStmt.bind(userId).first();
+            profile = { username: null, ...status };
         }
-        return new Response(JSON.stringify(profile), { headers: { 'Content-Type': 'application/json' } });
+        
+        // is_muted や is_blocked が null の場合に 0 (false相当) を返すように整形
+        const responseProfile = {
+            username: profile.username,
+            is_blocked: profile.is_blocked || 0,
+            is_muted: profile.is_muted || 0
+        };
+
+        return new Response(JSON.stringify(responseProfile), { headers: { 'Content-Type': 'application/json' } });
     }
 
     if (request.method === 'POST') {
