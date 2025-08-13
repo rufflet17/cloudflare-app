@@ -1,3 +1,5 @@
+// backend/index.js
+
 // firebase-adminのJWT検証機能を模倣するためのヘルパー関数群
 async function verifyAdminToken(token, env) {
     // 本番環境では、Firebase Admin SDKで発行したカスタムトークンを厳格に検証するロ-ジックが必須です。
@@ -26,6 +28,11 @@ export async function onRequest(context) {
 
     // --- ルーティング ---
     const path = url.pathname.replace('/admin', ''); // `/admin`プレフィックスを削除してルーティング
+
+    // ★★★ 新しいAPIエンドポイントのルーティングを追加 ★★★
+    if (path === '/api/posts/all' && method === 'GET') {
+        return handleGetAllPosts(env, url.searchParams);
+    }
 
     if (path === '/api/rankings' && method === 'GET') {
         return handleGetRankings(env, url.searchParams);
@@ -56,63 +63,82 @@ export async function onRequest(context) {
 
 // --- API実装 ---
 
-async function handleGetRankings(env, params) {
-    const period = params.get('period'); // 'all', 'monthly', 'weekly', 'daily'
-    const date = params.get('date');     // 'YYYY-MM-DD'
+// ★★★ 全投稿をページネーションで取得するための新しいハンドラ ★★★
+async function handleGetAllPosts(env, params) {
+    const limit = parseInt(params.get('limit'), 10) || 1000;
+    const cursor = params.get('cursor'); // 最後に取得したデータの created_at
 
     let whereClause = '';
     let bindings = [];
 
-    if (period !== 'all') {
-        if (!date) {
-            return new Response(JSON.stringify({ error: "Date parameter is required for periodic rankings" }), { 
-                status: 400, headers: { 'Content-Type': 'application/json' }
-            });
-        }
+    if (cursor) {
+        whereClause = 'WHERE created_at < ?';
+        bindings.push(cursor);
+    }
+
+    try {
+        const query = `
+            SELECT id, r2_key, user_id, model_name, text_content, created_at FROM audios 
+            ${whereClause} 
+            ORDER BY created_at DESC 
+            LIMIT ?`;
         
+        // 次ページがあるか判定するために limit + 1 件取得
+        const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings, limit + 1).all();
+        
+        const has_more = results.length > limit;
+        const posts = results.slice(0, limit); // 返すデータは limit 件に絞る
+
+        return new Response(JSON.stringify({ posts, has_more }), { 
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+    } catch (e) {
+        console.error("Error in handleGetAllPosts:", e);
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
+    }
+}
+
+
+// --- 既存のAPI実装 (変更なし) ---
+
+async function handleGetRankings(env, params) {
+    const period = params.get('period');
+    const date = params.get('date');
+    let whereClause = '';
+    let bindings = [];
+    if (period !== 'all') {
+        if (!date) return new Response(JSON.stringify({ error: "Date parameter is required for periodic rankings" }), { status: 400, headers: { 'Content-Type': 'application/json' } });
         switch (period) {
             case 'daily': {
-                // 指定された1日のみを集計
                 whereClause = `WHERE date(a.created_at) = ?`;
                 bindings.push(date);
                 break;
             }
             case 'weekly': {
-                // 指定された日から過去7日間 (当日を含む) を集計
-                const endDate = new Date(date + 'T23:59:59.999Z'); // 当日の終わりまで
+                const endDate = new Date(date + 'T23:59:59.999Z');
                 const startDate = new Date(endDate);
-                startDate.setDate(startDate.getDate() - 6); // 6日前が開始日
-                startDate.setUTCHours(0, 0, 0, 0); // 開始日の始まりから
-
+                startDate.setDate(startDate.getDate() - 6);
+                startDate.setUTCHours(0, 0, 0, 0);
                 whereClause = `WHERE a.created_at BETWEEN ? AND ?`;
                 bindings.push(startDate.toISOString(), endDate.toISOString());
                 break;
             }
             case 'monthly': {
-                // 指定された月を集計
                 whereClause = `WHERE strftime('%Y-%m', a.created_at) = ?`;
-                bindings.push(date.substring(0, 7)); // YYYY-MM
+                bindings.push(date.substring(0, 7));
                 break;
             }
             default:
-                return new Response(JSON.stringify({ error: "Invalid period" }), { 
-                    status: 400, headers: { 'Content-Type': 'application/json' }
-                });
+                return new Response(JSON.stringify({ error: "Invalid period" }), { status: 400, headers: { 'Content-Type': 'application/json' } });
         }
     }
-
     try {
         const query = `
-            SELECT 
-                a.user_id, 
-                COUNT(a.id) as post_count,
-                COALESCE(us.is_blocked, 0) as is_blocked
-             FROM audios a
-             LEFT JOIN user_status us ON a.user_id = us.user_id
-             ${whereClause}
-             GROUP BY a.user_id
-             ORDER BY post_count DESC
-             LIMIT 100`;
+            SELECT a.user_id, COUNT(a.id) as post_count, COALESCE(us.is_blocked, 0) as is_blocked
+            FROM audios a LEFT JOIN user_status us ON a.user_id = us.user_id
+            ${whereClause}
+            GROUP BY a.user_id ORDER BY post_count DESC LIMIT 100`;
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
         return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' }});
     } catch (e) {
@@ -121,28 +147,17 @@ async function handleGetRankings(env, params) {
     }
 }
 
-
 async function handleListUserPosts(env, userId, params) {
     const searchText = params.get('searchText');
-    const limitParam = params.get('limit');
-    
     let whereConditions = ['user_id = ?'];
     let bindings = [userId];
-    
     if (searchText) {
         whereConditions.push('text_content LIKE ?');
         bindings.push(`%${searchText}%`);
     }
-
     const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
-    const limitClause = limitParam === 'all' ? '' : 'LIMIT ?';
-    if (limitParam !== 'all') {
-        const limit = parseInt(limitParam, 10) || 100;
-        bindings.push(limit);
-    }
-
     try {
-        const query = `SELECT id, r2_key, model_name, text_content, created_at FROM audios ${whereClause} ORDER BY created_at DESC ${limitClause}`;
+        const query = `SELECT id, r2_key, model_name, text_content, created_at FROM audios ${whereClause} ORDER BY created_at DESC`;
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
         return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' }});
     } catch (e) {
@@ -155,14 +170,9 @@ async function handleDeletePost(env, postId) {
     try {
         const stmt = env.MY_D1_DATABASE.prepare(`SELECT r2_key FROM audios WHERE id = ?`);
         const post = await stmt.bind(postId).first();
-
-        if (!post) {
-            return new Response(JSON.stringify({ error: "Post not found" }), { status: 404, headers: { 'Content-Type': 'application/json' }});
-        }
-
+        if (!post) return new Response(JSON.stringify({ error: "Post not found" }), { status: 404, headers: { 'Content-Type': 'application/json' }});
         await env.MY_R2_BUCKET.delete(post.r2_key);
         await env.MY_D1_DATABASE.prepare(`DELETE FROM audios WHERE id = ?`).bind(postId).run();
-
         return new Response(JSON.stringify({ success: true, deleted_post_id: postId }), { headers: { 'Content-Type': 'application/json' }});
     } catch (e) {
         console.error("Error in handleDeletePost:", e);
@@ -173,13 +183,9 @@ async function handleDeletePost(env, postId) {
 async function handleDeleteAllPosts(env, userId) {
     try {
         const { results } = await env.MY_D1_DATABASE.prepare(`SELECT r2_key FROM audios WHERE user_id = ?`).bind(userId).all();
-        if (!results || results.length === 0) {
-            return new Response(JSON.stringify({ message: "No posts to delete." }), { status: 200, headers: { 'Content-Type': 'application/json' }});
-        }
+        if (!results || results.length === 0) return new Response(JSON.stringify({ message: "No posts to delete." }), { status: 200, headers: { 'Content-Type': 'application/json' }});
         const keysToDelete = results.map(row => row.r2_key);
-        if (keysToDelete.length > 0) {
-            await env.MY_R2_BUCKET.delete(keysToDelete);
-        }
+        if (keysToDelete.length > 0) await env.MY_R2_BUCKET.delete(keysToDelete);
         await env.MY_D1_DATABASE.prepare(`DELETE FROM audios WHERE user_id = ?`).bind(userId).run();
         return new Response(JSON.stringify({ success: true, deleted_count: keysToDelete.length }), { headers: { 'Content-Type': 'application/json' }});
     } catch (e) {
