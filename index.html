@@ -333,7 +333,7 @@
         };
         async function handleEditUsername() {
             if (!currentUser) return;
-            const currentName = userProfile ? userProfile.username : (currentUser.displayName || '');
+            const currentName = userProfile.username ? userProfile.username : (currentUser.displayName || '');
             const newName = prompt("新しい表示名を入力してください（20文字以内）:", currentName);
             if (newName === null) { return; }
             const trimmedName = newName.trim();
@@ -577,64 +577,87 @@
     }
 
     async function saveAudioToR2(blob, modelId, text, button) {
+        button.disabled = true;
+
         if (window.userProfile && window.userProfile.is_muted === 1) {
-            button.disabled = true;
             const localKey = `local-${crypto.randomUUID()}`;
             window.localDataStore.set(localKey, { blob, modelId, text, createdAt: new Date().toISOString() });
             setStatus(`音声の保存が完了しました。`);
             
             const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
             if (r2TabButton.classList.contains('active')) {
-                // If already on the gallery tab, just reload it
-                loadR2Gallery();
+                await loadR2Gallery();
             } else {
-                // Otherwise, switch to the gallery tab
                 r2TabButton.click();
             }
-            setTimeout(() => { button.disabled = false; }, 1000);
+            button.disabled = false;
             return;
         }
 
-        if (!blob || !modelId || !text) { setStatus('保存対象の音声データが不完全です。', true); return; }
+        if (!blob || !modelId || !text) { 
+            setStatus('保存対象の音声データが不完全です。', true);
+            button.disabled = false;
+            return;
+        }
         setStatus('音声を保存中...');
-        button.disabled = true;
+        
         try {
             const reader = new FileReader();
             reader.readAsDataURL(blob);
-            reader.onloadend = async () => {
-                try {
-                    const base64Audio = reader.result.split(',')[1];
-                    const response = await fetch('/api/upload', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ modelId: modelId, text: text, audioBase64: base64Audio, contentType: blob.type })
-                    });
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({ error: response.statusText }));
-                        throw new Error(errorData.error || "保存に失敗しました");
-                    }
-                    setStatus(`音声の保存が完了しました。`);
-                    const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
-                    if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) r2TabButton.click();
-                } catch (err) { 
-                    console.error('Save error:', err);
-                    setStatus(err.message, true);
-                } finally {
-                    button.disabled = false;
-                }
-            };
-        } catch (error) { 
-            console.error('File reading error:', error);
-            setStatus('ファイルの読み込みに失敗しました。', true);
+            await new Promise((resolve, reject) => {
+                reader.onloadend = resolve;
+                reader.onerror = reject;
+            });
+
+            const base64Audio = reader.result.split(',')[1];
+            const response = await fetch('/api/upload', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ modelId: modelId, text: text, audioBase64: base64Audio, contentType: blob.type })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ error: response.statusText }));
+                throw new Error(errorData.error || "保存に失敗しました");
+            }
+
+            setStatus(`音声の保存が完了しました。`);
+            const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
+            if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) {
+                r2TabButton.click();
+            }
+        } catch (err) { 
+            console.error('Save error:', err);
+            setStatus(err.message, true);
+        } finally {
             button.disabled = false;
         }
     }
     
     function setupStorageEventListeners() {
-        saveToR2Btn.addEventListener('click', () => saveAudioToR2(currentCombinedAudioBlob, getCurrentModelId(), currentCombinedAudioInfo.text, saveToR2Btn));
-        savePreviewToR2Btn.addEventListener('click', () => saveAudioToR2(currentPreviewAudioBlob, getCurrentModelId(), currentPreviewAudioInfo.text, savePreviewToR2Btn));
-        refreshR2GalleryBtn.addEventListener('click', () => { r2GalleryState.currentPage = 1; r2GalleryState.userId = ''; loadR2Gallery(); });
-        r2FilterMineToggle.addEventListener('change', () => { r2GalleryState.filter = r2FilterMineToggle.checked ? 'mine' : 'all'; r2GalleryState.currentPage = 1; r2GalleryState.userId = ''; loadR2Gallery(); });
-        const handleSearch = () => { r2GalleryState.modelId = r2SearchModelSelect.value; r2GalleryState.searchText = r2SearchTextInput.value; r2GalleryState.currentPage = 1; r2GalleryState.userId = ''; loadR2Gallery(); };
+        saveToR2Btn.addEventListener('click', async () => {
+            await saveAudioToR2(currentCombinedAudioBlob, getCurrentModelId(), currentCombinedAudioInfo.text, saveToR2Btn);
+        });
+        savePreviewToR2Btn.addEventListener('click', async () => {
+            await saveAudioToR2(currentPreviewAudioBlob, getCurrentModelId(), currentPreviewAudioInfo.text, savePreviewToR2Btn);
+        });
+        refreshR2GalleryBtn.addEventListener('click', () => { 
+            r2GalleryState.currentPage = 1; 
+            r2GalleryState.userId = ''; 
+            loadR2Gallery(); 
+        });
+        r2FilterMineToggle.addEventListener('change', () => { 
+            r2GalleryState.filter = r2FilterMineToggle.checked ? 'mine' : 'all'; 
+            r2GalleryState.currentPage = 1; 
+            r2GalleryState.userId = ''; 
+            loadR2Gallery(); 
+        });
+        const handleSearch = () => { 
+            r2GalleryState.modelId = r2SearchModelSelect.value; 
+            r2GalleryState.searchText = r2SearchTextInput.value; 
+            r2GalleryState.currentPage = 1; 
+            r2GalleryState.userId = ''; 
+            loadR2Gallery(); 
+        };
         r2SearchModelSelect.addEventListener('change', handleSearch);
         r2SearchTextInput.addEventListener('input', handleSearch);
         r2PrevPageBtn.addEventListener('click', () => { if (r2GalleryState.currentPage > 1) { r2GalleryState.currentPage--; loadR2Gallery(); } });
