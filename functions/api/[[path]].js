@@ -297,8 +297,21 @@ async function handleList(request, env, decodedToken) {
     try {
         const url = new URL(request.url);
         const params = url.searchParams;
+
+        // 1. 1ページあたりの件数をサーバー側で固定
+        const limit = 10; 
+        
+        // 2. ページ番号を取得し、数値に変換
         const page = parseInt(params.get('page') || '1', 10);
-        const limit = 10;
+        
+        // 3. ページ番号の上限を設定 (例: 100ページ目まで)
+        const MAX_PAGE = 100; 
+        
+        // 4. 不正なページ番号や上限を超えたリクエストを弾く
+        if (isNaN(page) || page < 1 || page > MAX_PAGE) {
+            return new Response(JSON.stringify({ error: "無効なページ番号です。" }), { status: 400, headers: { 'Content-Type': 'application/json' }});
+        }
+        
         const filter = params.get('filter');
         const modelId = params.get('modelId');
         const searchText = params.get('searchText');
@@ -313,7 +326,7 @@ async function handleList(request, env, decodedToken) {
             bindings.push(userId);
         } else if (filter === 'mine') {
             if (!decodedToken || !decodedToken.sub) {
-                return new Response(JSON.stringify({ error: "このフィルターには認証が必要です。" }), { status: 401 });
+                return new Response(JSON.stringify({ error: "このフィルターには認証が必要です。" }), { status: 401, headers: { 'Content-Type': 'application/json' }});
             }
             conditions.push("user_id = ?");
             bindings.push(decodedToken.sub);
