@@ -454,8 +454,7 @@
             card.innerHTML = `
                 <div class="card-main">
                     <div style="margin-bottom: 8px;">
-                        <p class="card-owner-info">${ownerUsername}${ownerIndicator}</p>
-                        <p style="margin: 0; color: #666; font-size: 0.9em; word-break: break-all;">モデル: ${modelDisplayName}</p>
+                        <p class="card-owner-info">${modelDisplayName}　${ownerUsername}${ownerIndicator}</p>
                         <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p>
                     </div>
                     <audio controls preload="none" src="/api/get/${encodeURIComponent(file.r2_key)}"></audio>
@@ -537,7 +536,7 @@
                         throw new Error(`R2への保存に失敗: ${errorData.error}`);
                     }
                     const result = await response.json();
-                    setStatus(`音声をR2に保存しました (Key: ${result.key})`);
+                    setStatus('音声をR2に保存しました。');
                     const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
                     if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) r2TabButton.click();
                 } catch (err) { console.error('R2 save error:', err); setStatus(err.message, true); } 
