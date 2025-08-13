@@ -123,8 +123,9 @@
         #add-first-card-btn { background-color: var(--primary-color); }
         #r2-filter-status { display: none; padding: 8px 12px; margin-bottom: 1rem; border-radius: 4px; background-color: #e2e3e5; text-align: center; font-size: 0.9em; }
         #r2-filter-status button { background: none; border: none; color: var(--primary-color); text-decoration: underline; cursor: pointer; padding: 0 4px; font-size: inherit; }
-        .card-owner-info { font-weight: bold; margin: 0; word-break: break-all; }
-        .card-owner-info .is-own { font-size: 0.8em; color: var(--primary-color); }
+        .card-owner-info { display: flex; justify-content: space-between; align-items: baseline; font-weight: bold; margin: 0; word-break: break-all; }
+        .card-owner-info .is-own { font-size: 0.8em; color: var(--primary-color); margin-left: 0.5em; }
+        .card-owner-info .username { color: #666; font-size: 0.9em; }
         @media (max-width: 768px) {
             .container-wrapper { position: static; transform: none; width: auto; margin: 1rem; padding: 1rem; cursor: default; }
             .container-header { padding: 0; border-bottom: none; cursor: default; }
@@ -447,15 +448,17 @@
             const downloadFilename = createSafeFileName(file.model_name, file.text_content, formatConfig.extension);
             const isOwnFile = currentUid && file.user_id === currentUid;
             const ownerUsername = file.username || '匿名ユーザー';
-            const ownerIndicator = isOwnFile ? ` <span class="is-own">(自分)</span>` : '';
+            const ownerIndicator = isOwnFile ? `<span class="is-own">(自分)</span>` : '';
             const actionButton = isOwnFile
                 ? `<button class="icon-btn btn-delete-r2" title="削除">🗑️</button>`
                 : `<button class="icon-btn btn-view-user-files" title="この投稿者の他の音声">👤</button>`;
             card.innerHTML = `
                 <div class="card-main">
                     <div style="margin-bottom: 8px;">
-                        <p class="card-owner-info">${ownerUsername}${ownerIndicator}</p>
-                        <p style="margin: 0; color: #666; font-size: 0.9em; word-break: break-all;">モデル: ${modelDisplayName}</p>
+                        <p class="card-owner-info">
+                            <span>${modelDisplayName}</span>
+                            <span class="username">${ownerUsername}${ownerIndicator}</span>
+                        </p>
                         <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p>
                     </div>
                     <audio controls preload="none" src="/api/get/${encodeURIComponent(file.r2_key)}"></audio>
