@@ -1,4 +1,4 @@
-// btoaはNode.js環境ではデフォルトで利用できないため、Cloudflare Workersのグローバルスコープで利用可能なことを前提としています。
+// btoa/atobはCloudflare Workersのグローバルスコープで利用可能です。
 
 // --- JWT検証用のヘルパー関数 ---
 let googlePublicKeys = null;
@@ -6,6 +6,7 @@ let keysFetchTime = 0;
 
 async function getGooglePublicKeys() {
     const now = Date.now();
+    // 1時間キャッシュを利用
     if (googlePublicKeys && (now - keysFetchTime < 3600 * 1000)) {
         return googlePublicKeys;
     }
@@ -88,23 +89,27 @@ function str2ab(str) {
     return buf;
 }
 
-// --- APIハンドラー ---
+// --- メインリクエストハンドラー ---
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
 
+  // AIモデル取得API
   if (path === "/get-models" && method === "GET") {
     return handleGetModels(context);
   }
+  // 音声合成API
   if (path === "/synthesize" && method === "POST") {
     return handleSynthesize(context);
   }
+  // データ操作関連API
   if (path.startsWith("/api/")) {
     return handleApiRoutes(context);
   }
 
+  // 上記に一致しない場合は、Pagesのアセットを返す
   return context.next();
 }
 
@@ -195,13 +200,14 @@ async function handleSynthesize({ request, env }) {
   }
 }
 
+// --- /api/* ルートのメインハンドラ ---
 async function handleApiRoutes(context) {
     const { request, env } = context;
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
 
-    let user = null;
+    let decodedToken = null;
 
     const filter = url.searchParams.get('filter');
     const isProtectedRoute = 
@@ -216,24 +222,22 @@ async function handleApiRoutes(context) {
         }
         
         const token = authHeader.substring(7);
-        const decodedToken = await verifyFirebaseToken(token, env);
+        decodedToken = await verifyFirebaseToken(token, env);
 
         if (!decodedToken) {
             return new Response(JSON.stringify({ error: "トークンが無効です。" }), { status: 403, headers: { 'Content-Type': 'application/json' } });
         }
-        
-        user = { uid: decodedToken.sub };
     }
 
     if (path === '/api/upload' && method === 'POST') {
-        return handleUpload(request, env, user);
+        return handleUpload(request, env, decodedToken);
     }
     if (path.startsWith('/api/delete/') && method === 'DELETE') {
         const key = decodeURIComponent(url.pathname.substring('/api/delete/'.length));
-        return handleDelete(request, env, user, key);
+        return handleLogicalDelete(request, env, decodedToken, key);
     }
     if (path === '/api/list' && method === 'GET') {
-        return handleList(request, env, user);
+        return handleList(request, env, decodedToken);
     }
     if (path.startsWith('/api/get/') && method === 'GET') {
         const key = decodeURIComponent(url.pathname.substring('/api/get/'.length));
@@ -243,32 +247,27 @@ async function handleApiRoutes(context) {
     return new Response("API Route Not Found", { status: 404 });
 }
 
-async function handleUpload(request, env, user) {
-    if (!user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { 'Content-Type': 'application/json' }});
+// --- 個別のAPI実装 ---
+
+async function handleUpload(request, env, decodedToken) {
+    if (!decodedToken || !decodedToken.sub) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
+    const user = { uid: decodedToken.sub };
 
     try {
-        // ★★★★★ ブロックチェック処理を追加 ★★★★★
-        const stmt = env.MY_D1_DATABASE.prepare(
-            `SELECT is_blocked FROM user_status WHERE user_id = ?`
-        );
+        const stmt = env.MY_D1_DATABASE.prepare(`SELECT is_blocked FROM user_status WHERE user_id = ?`);
         const userStatus = await stmt.bind(user.uid).first();
-
         if (userStatus && userStatus.is_blocked === 1) {
-            return new Response(JSON.stringify({ error: "あなたのアカウントは投稿が制限されています。" }), { status: 403, headers: { 'Content-Type': 'application/json' }});
+            return new Response(JSON.stringify({ error: "あなたのアカウントは投稿が制限されています。" }), { status: 403 });
         }
-        // ★★★★★ ここまで追加 ★★★★★
 
-        // --- これ以降は既存のアップロード処理 ---
         const { modelId, text, audioBase64, contentType } = await request.json();
         if (!modelId || !text || !audioBase64 || !contentType) {
-            return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400, headers: { 'Content-Type': 'application/json' }});
+            return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
         }
         
         const audioData = atob(audioBase64);
         const arrayBuffer = new Uint8Array(audioData.length);
-        for (let i = 0; i < audioData.length; i++) {
-            arrayBuffer[i] = audioData.charCodeAt(i);
-        }
+        for (let i = 0; i < audioData.length; i++) arrayBuffer[i] = audioData.charCodeAt(i);
 
         const extension = contentType.split('/')[1] || 'bin';
         const r2Key = `${user.uid}/${crypto.randomUUID()}.${extension}`;
@@ -279,7 +278,7 @@ async function handleUpload(request, env, user) {
         const createdAt = new Date().toISOString();
         
         const { success } = await env.MY_D1_DATABASE.prepare(
-            `INSERT INTO audios (id, r2_key, user_id, model_name, text_content, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+            `INSERT INTO audios (id, r2_key, user_id, model_name, text_content, created_at, is_deleted) VALUES (?, ?, ?, ?, ?, ?, 0)`
         ).bind(d1Key, r2Key, user.uid, modelId, text, createdAt).run();
 
         if (!success) {
@@ -294,61 +293,55 @@ async function handleUpload(request, env, user) {
     }
 }
 
-async function handleList(request, env, user) {
+async function handleList(request, env, decodedToken) {
     try {
         const url = new URL(request.url);
         const params = url.searchParams;
-
         const page = parseInt(params.get('page') || '1', 10);
         const limit = 10;
         const filter = params.get('filter');
         const modelId = params.get('modelId');
         const searchText = params.get('searchText');
         const userId = params.get('userId');
-        
         const offset = (page - 1) * limit;
 
-        let conditions = [];
+        let conditions = ["is_deleted = 0"];
         let bindings = [];
 
         if (userId) {
             conditions.push("user_id = ?");
             bindings.push(userId);
         } else if (filter === 'mine') {
-            if (!user || !user.uid) {
-                return new Response(JSON.stringify({ error: "このフィルターには認証が必要です。" }), { status: 401, headers: { 'Content-Type': 'application/json' }});
+            if (!decodedToken || !decodedToken.sub) {
+                return new Response(JSON.stringify({ error: "このフィルターには認証が必要です。" }), { status: 401 });
             }
             conditions.push("user_id = ?");
-            bindings.push(user.uid);
+            bindings.push(decodedToken.sub);
         }
 
         if (modelId) {
             conditions.push("model_name = ?");
             bindings.push(modelId);
         }
-
         if (searchText) {
             conditions.push("text_content LIKE ?");
             bindings.push(`%${searchText}%`);
         }
         
-        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const whereClause = `WHERE ${conditions.join(' AND ')}`;
         
         const query = `
             SELECT r2_key, user_id, model_name, text_content, created_at 
             FROM audios 
             ${whereClause} 
             ORDER BY created_at DESC 
-            LIMIT ? OFFSET ?
-        `;
+            LIMIT ? OFFSET ?`;
         bindings.push(limit, offset);
 
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
-
         return new Response(JSON.stringify(results || []), {
             headers: { "Content-Type": "application/json" },
         });
-
     } catch (error) {
         console.error("List failed:", error);
         return new Response(JSON.stringify({ error: "Failed to list audio files." }), { status: 500, headers: { 'Content-Type': 'application/json' }});
@@ -357,10 +350,18 @@ async function handleList(request, env, user) {
 
 async function handleGet(request, env, key) {
     try {
+        const stmt = env.MY_D1_DATABASE.prepare("SELECT id FROM audios WHERE r2_key = ? AND is_deleted = 0");
+        const d1_entry = await stmt.bind(key).first();
+        
+        if (!d1_entry) {
+            return new Response("Object Not Found", { status: 404 });
+        }
+
         const object = await env.MY_R2_BUCKET.get(key);
         if (object === null) {
             return new Response("Object Not Found in R2", { status: 404 });
         }
+        
         const headers = new Headers();
         object.writeHttpMetadata(headers);
         headers.set("etag", object.httpEtag);
@@ -371,21 +372,25 @@ async function handleGet(request, env, key) {
     }
 }
 
-async function handleDelete(request, env, user, key) {
-    if (!user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { 'Content-Type': 'application/json' }});
-    try {
-        const stmt = env.MY_D1_DATABASE.prepare("DELETE FROM audios WHERE r2_key = ? AND user_id = ? RETURNING id");
-        const { results } = await stmt.bind(key, user.uid).all();
+async function handleLogicalDelete(request, env, decodedToken, key) {
+    if (!decodedToken || !decodedToken.sub) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
+    const user = { uid: decodedToken.sub };
 
-        if (!results || results.length === 0) {
+    try {
+        const stmt = env.MY_D1_DATABASE.prepare(
+            `UPDATE audios 
+             SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP 
+             WHERE r2_key = ? AND user_id = ? AND is_deleted = 0`
+        );
+        const { meta } = await stmt.bind(key, user.uid).run();
+
+        if (meta.changes === 0) {
             return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404, headers: { 'Content-Type': 'application/json' }});
         }
         
-        await env.MY_R2_BUCKET.delete(key);
-
         return new Response(JSON.stringify({ success: true, key: key }), { status: 200, headers: { 'Content-Type': 'application/json' }});
     } catch (error) {
-        console.error("Delete failed:", error);
+        console.error("Logical delete failed:", error);
         return new Response(JSON.stringify({ error: "Failed to delete audio file." }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
