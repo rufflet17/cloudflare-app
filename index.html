@@ -180,7 +180,6 @@
         .tab-button.locked-feature::after { border-radius: 0; font-size: 0.8em; }
         #r2-gallery-wrapper.locked-feature::after { border-radius: 8px; }
         #r2-pagination-controls { display: none; justify-content: center; align-items: center; gap: 1rem; margin-top: 1rem; }
-        #r2-page-info { font-weight: bold; }
     </style>
 </head>
 <body>
@@ -299,8 +298,7 @@
     // =========================================================================
 
     // --- グローバル定数、DOM要素、状態管理変数 ---
-
-    const SHOW_ADVANCED_FORMATS = true; 
+    const SHOW_ADVANCED_FORMATS = true;
     const FORMAT_MAPPING = { mp3: { contentType: 'audio/mpeg', extension: 'mp3' }, wav: { contentType: 'audio/wav', extension: 'wav' }, flac: { contentType: 'audio/flac', extension: 'flac' }, opus: { contentType: 'audio/ogg', extension: 'opus' } };
     const STORAGE_KEY = 'ttsAppStorage_v14';
 
@@ -370,7 +368,6 @@
     };
 
     // --- 関数群 ---
-
     const loadState = () => { const savedState = localStorage.getItem(STORAGE_KEY); appState = savedState ? JSON.parse(savedState) : {}; appState.uiSettings = { ...defaultUiSettings, ...(appState.uiSettings || {}) }; };
     const saveState = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
     const getModelData = (modelId) => { if (!appState[modelId]) { const modelName = originalModels.find(m => m.id === modelId)?.name || modelId; appState[modelId] = { displayName: modelName, images: [], activeImageId: null }; } return appState[modelId]; };
@@ -635,19 +632,19 @@
 
     // イベントリスナー設定関数
     function setupSettingsEventListeners() {
-        tabButtons.forEach(button => button.addEventListener('click', () => { 
-            bodyElement.classList.add('no-transition'); 
-            tabButtons.forEach(btn => btn.classList.remove('active')); 
-            tabContents.forEach(content => content.classList.remove('active')); 
-            button.classList.add('active'); 
+        tabButtons.forEach(button => button.addEventListener('click', () => {
+            bodyElement.classList.add('no-transition');
+            tabButtons.forEach(btn => btn.classList.remove('active'));
+            tabContents.forEach(content => content.classList.remove('active'));
+            button.classList.add('active');
             const activeTab = document.getElementById(`tab-${button.dataset.tab}`);
-            activeTab.classList.add('active'); 
+            activeTab.classList.add('active');
             if (button.dataset.tab === 'r2-gallery' && !button.classList.contains('locked-feature')) {
                 r2GalleryState.currentPage = 1;
                 loadR2Gallery();
             }
-            if (isAdjustMode) { endBgAdjustMode({ revert: true }); } 
-            setTimeout(() => bodyElement.classList.remove('no-transition'), 50); 
+            if (isAdjustMode) { endBgAdjustMode({ revert: true }); }
+            setTimeout(() => bodyElement.classList.remove('no-transition'), 50);
         }));
 
         const uiSettingsMap = [ { slider: uiWidthSlider, input: uiWidthInput, key: 'width' }, { slider: uiOpacitySlider, input: uiOpacityInput, key: 'opacity' } ];
@@ -736,10 +733,10 @@
         bodyElement.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); if (!isAdjustMode) bodyElement.classList.add('drag-over'); });
         bodyElement.addEventListener('dragleave', (e) => { e.preventDefault(); e.stopPropagation(); bodyElement.classList.remove('drag-over'); });
         bodyElement.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); bodyElement.classList.remove('drag-over'); if (e.dataTransfer.files.length > 0) { handleFile(e.dataTransfer.files[0]); } });
-        
+
         uploadImageBtn.addEventListener('click', () => imageUploadInput.click());
         imageUploadInput.addEventListener('change', (e) => { if (e.target.files.length > 0) { handleFile(e.target.files[0]); } e.target.value = null; });
-        
+
         galleryContainer.addEventListener('click', (e) => {
             const item = e.target.closest('.gallery-item');
             if (!item) return;
@@ -782,7 +779,7 @@
 
         exportAllSettingsBtn.addEventListener('click', exportAllSettings);
     }
-        
+
     // =========================================================================
     // --- 2. R2ストレージとの通信（保存・表示・削除）とFirebase認証 ---
     // =========================================================================
@@ -1184,13 +1181,11 @@
                     });
                     if (!response.ok) {
                         const errorData = await response.json().catch(() => ({ error: response.statusText, reason: null }));
-                        // ★★★ 修正点: ミュート状態をチェックし、処理を分岐させる ★★★
                         if (response.status === 403 && errorData.reason === 'muted') {
-                            setStatus(errorData.error); // バックエンドからのメッセージを表示
-                            await saveAudioAsTestPost(blob, modelId, text, button); // テスト投稿関数を呼び出す
-                            return; // R2保存処理はここで終了
+                            setStatus(errorData.error);
+                            await saveAudioAsTestPost(blob, modelId, text, button);
+                            return;
                         }
-                        // ★★★ ここまで修正点 ★★★
                         throw new Error(`R2への保存に失敗: ${errorData.error}`);
                     }
                     const result = await response.json();
@@ -1210,8 +1205,6 @@
         // R2保存ボタン
         saveToR2Btn.addEventListener('click', () => saveAudioToR2(currentCombinedAudioBlob, getCurrentModelId(), currentCombinedAudioInfo.text, saveToR2Btn));
         savePreviewToR2Btn.addEventListener('click', () => saveAudioToR2(currentPreviewAudioBlob, getCurrentModelId(), currentPreviewAudioInfo.text, savePreviewToR2Btn));
-        
-        // ★★★ 修正点: テスト投稿ボタンのイベントリスナーを削除 ★★★
         
         // ギャラリー操作
         refreshR2GalleryBtn.addEventListener('click', () => { r2GalleryState.currentPage = 1; r2GalleryState.userId = ''; loadR2Gallery(); });
@@ -1270,4 +1263,6 @@
     </script>
 
     <!-- 分割されたJavaScriptファイル -->
-    <script sr
+    <script src="audio.js"></script>
+</body>
+</html>
