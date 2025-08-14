@@ -301,7 +301,8 @@
     // --- グローバル定数 ---
     const SHOW_ADVANCED_FORMATS = true; 
     const FORMAT_MAPPING = { mp3: { contentType: 'audio/mpeg', extension: 'mp3' }, wav: { contentType: 'audio/wav', extension: 'wav' }, flac: { contentType: 'audio/flac', extension: 'flac' }, opus: { contentType: 'audio/ogg', extension: 'opus' } };
-    
+    const STORAGE_KEY = 'ttsAppStorage_v14';
+
     // --- DOM要素取得 ---
     const modelSelectTTS = document.getElementById('model-select-tts'), modelSelectBG = document.getElementById('model-select-bg'), formatSelect = document.getElementById('format-select');
     const generateBtn = document.getElementById('generate-btn'), generatePreviewBtn = document.getElementById('generate-preview-btn');
@@ -358,91 +359,12 @@
     const audioContextForDecoding = new (window.AudioContext || window.webkitAudioContext)();
     let r2GalleryState = { currentPage: 1, filter: 'all', modelId: '', searchText: '', userId: '', isLoading: false, hasNextPage: false };
 
-    // =========================================================================
-    // --- 2. IndexedDB ヘルパー & 状態管理 ---
-    // =========================================================================
-    const DB_NAME = 'ttsAppDB';
-    const DB_VERSION = 1;
-    const STORE_NAME = 'appStateStore';
-    const STATE_KEY = 'mainState';
-    let db;
-
-    function openDB() {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open(DB_NAME, DB_VERSION);
-            request.onupgradeneeded = (event) => {
-                const dbInstance = event.target.result;
-                if (!dbInstance.objectStoreNames.contains(STORE_NAME)) {
-                    dbInstance.createObjectStore(STORE_NAME);
-                }
-            };
-            request.onsuccess = (event) => {
-                db = event.target.result;
-                resolve(db);
-            };
-            request.onerror = (event) => {
-                console.error('IndexedDB error:', event.target.error);
-                reject(event.target.error);
-            };
-        });
-    }
-
-    function getFromDB(key) {
-        return new Promise((resolve, reject) => {
-            if (!db) { reject('DB not initialized'); return; }
-            const transaction = db.transaction([STORE_NAME], 'readonly');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(key);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = (event) => reject(event.target.error);
-        });
-    }
-
-    function setToDB(key, value) {
-        return new Promise((resolve, reject) => {
-            if (!db) { reject('DB not initialized'); return; }
-            const transaction = db.transaction([STORE_NAME], 'readwrite');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.put(value, key);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = (event) => reject(event.target.error);
-        });
-    }
-
-    function clearStoreInDB() {
-        return new Promise((resolve, reject) => {
-            if (!db) { reject('DB not initialized'); return; }
-            const transaction = db.transaction([STORE_NAME], 'readwrite');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.clear();
-            request.onsuccess = () => resolve();
-            request.onerror = (event) => reject(event.target.error);
-        });
-    }
-
-    const loadState = async () => {
-        try {
-            const savedState = await getFromDB(STATE_KEY);
-            appState = savedState ? savedState : {};
-        } catch (error) {
-            console.error("Failed to load state from IndexedDB, using default.", error);
-            appState = {};
-        }
-        appState.uiSettings = { ...defaultUiSettings, ...(appState.uiSettings || {}) };
-    };
-
-    const saveState = async () => {
-        try {
-            await setToDB(STATE_KEY, appState);
-        } catch (error) {
-            console.error("Failed to save state to IndexedDB:", error);
-            setStatus("設定の保存に失敗しました。", true);
-        }
-    };
 
     // =========================================================================
-    // --- 3. コア・ユーティリティ関数 ---
+    // --- 2. コア・ユーティリティ関数 ---
     // =========================================================================
+    const loadState = () => { const savedState = localStorage.getItem(STORAGE_KEY); appState = savedState ? JSON.parse(savedState) : {}; appState.uiSettings = { ...defaultUiSettings, ...(appState.uiSettings || {}) }; };
+    const saveState = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
     const getModelData = (modelId) => { if (!appState[modelId]) { const modelName = originalModels.find(m => m.id === modelId)?.name || modelId; appState[modelId] = { displayName: modelName, images: [], activeImageId: null }; } return appState[modelId]; };
     const getActiveImage = (modelId) => modelId ? getModelData(modelId).images.find(img => img.id === getModelData(modelId).activeImageId) : null;
     const getCurrentModelId = () => modelSelectTTS.value;
@@ -460,7 +382,7 @@
     }
 
     // =========================================================================
-    // --- 4. UI・背景設定関連 ---
+    // --- 3. UI・背景設定関連 ---
     // =========================================================================
     const updateSelectOptions = () => {
         [modelSelectTTS, modelSelectBG].forEach(sel => Array.from(sel.options).forEach(opt => { if(opt.value) opt.textContent = getModelData(opt.value).displayName; }));
@@ -597,7 +519,7 @@
                 }
             }
             appState = importedState;
-            await saveState();
+            saveState();
             alert('インポートが完了しました。ページをリロードします。');
             location.reload();
         } catch (error) { console.error("インポートエラー:", error); setStatus(`インポートに失敗しました: ${error.message}`, true); }
@@ -666,7 +588,7 @@
     };
 
     // =========================================================================
-    // --- 5. Firebase認証 & API通信 ---
+    // --- 4. Firebase認証 & API通信 ---
     // =========================================================================
     (function() {
         'use strict';
@@ -796,7 +718,7 @@
     
 
     // =========================================================================
-    // --- 6. R2ストレージ連携 ---
+    // --- 5. R2ストレージ連携 ---
     // =========================================================================
     function base64toBlob(base64, contentType = '', sliceSize = 512) {
         const byteCharacters = atob(base64);
@@ -971,7 +893,7 @@
     
 
     // =========================================================================
-    // --- 7. イベントリスナー設定 ---
+    // --- 6. イベントリスナー設定 ---
     // =========================================================================
     function setupSettingsEventListeners() {
         tabButtons.forEach(button => button.addEventListener('click', () => { 
@@ -1030,21 +952,14 @@
             appState.uiSettings.posY = containerWrapper.offsetTop;
             saveState();
         });
-        resetAllBgsBtn.addEventListener('click', async () => {
+        resetAllBgsBtn.addEventListener('click', () => {
             const confirmationText = "背景リセット";
             const userInput = prompt(`この操作は元に戻せません。\n全てのモデルの表示名と背景画像が削除されます。\n\nリセットを実行するには「${confirmationText}」と入力してください。`);
             if (userInput === confirmationText) {
-                try {
-                    const uiSettings = appState.uiSettings; // UI設定を退避
-                    await clearStoreInDB(); // DBをクリア
-                    appState = { uiSettings: uiSettings }; // メモリ上の状態をリセット
-                    await saveState(); // UI設定だけをDBに保存し直す
-                    alert('すべての背景設定がリセットされました。ページをリロードします。');
-                    location.reload();
-                } catch(error) {
-                    console.error("Failed to reset settings:", error);
-                    alert("リセット処理中にエラーが発生しました。");
-                }
+                Object.keys(appState).forEach(key => { if (key !== 'uiSettings') delete appState[key]; });
+                saveState();
+                alert('すべての背景設定がリセットされました。ページをリロードします。');
+                location.reload();
             } else if (userInput !== null) { alert('入力が一致しませんでした。リセットはキャンセルされました。'); }
         });
         [modelSelectTTS, modelSelectBG].forEach(sel => sel.addEventListener('change', (e) => {
@@ -1147,7 +1062,7 @@
     }
 
     // =========================================================================
-    // --- 8. アプリケーション初期化 ---
+    // --- 7. アプリケーション初期化 ---
     // =========================================================================
     function updateResultCardsUI() {
         const hasResults = Object.keys(resultStates).length > 0;
@@ -1156,13 +1071,6 @@
     }
     
     document.addEventListener('DOMContentLoaded', async () => {
-        try {
-            await openDB(); // まずDB接続を確立
-        } catch (error) {
-            console.error("Failed to open IndexedDB. Settings will not be saved.", error);
-            setStatus("データベースの初期化に失敗しました。設定は保存されません。", true);
-        }
-        
         try {
             const response = await fetch('/api/models');
             if (!response.ok) throw new Error('モデル情報の取得に失敗しました。');
@@ -1173,7 +1081,7 @@
             originalModels = [];
         }
 
-        await loadState(); // DBから状態を読み込む
+        loadState();
         updateFormatSelectVisibility();
 
         [modelSelectTTS, modelSelectBG, r2SearchModelSelect].forEach(sel => {
@@ -1202,7 +1110,6 @@
         setupSettingsEventListeners();
         setupStorageEventListeners();
         
-        // 外部ファイル 'audio.js' が存在する場合にその中の関数を呼び出す
         if (typeof setupAudioEventListeners === 'function') {
             setupAudioEventListeners();
         } else {
