@@ -275,10 +275,16 @@ async function handleUpload(request, env, decodedToken) {
     const user = { uid: decodedToken.sub };
 
     try {
-        const stmt = env.MY_D1_DATABASE.prepare(`SELECT is_blocked FROM user_status WHERE user_id = ?`);
+        const stmt = env.MY_D1_DATABASE.prepare(`SELECT is_blocked, is_muted FROM user_status WHERE user_id = ?`);
         const userStatus = await stmt.bind(user.uid).first();
-        if (userStatus && userStatus.is_blocked === 1) {
-            return new Response(JSON.stringify({ error: "あなたのアカウントは投稿が制限されています。" }), { status: 403 });
+        
+        if (userStatus) {
+            if (userStatus.is_blocked === 1) {
+                return new Response(JSON.stringify({ error: "あなたのアカウントは投稿が制限されています。", reason: "blocked" }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+            }
+            if (userStatus.is_muted === 1) {
+                return new Response(JSON.stringify({ error: "ミュート状態のため、この音声はテスト投稿として保存されます。", reason: "muted" }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+            }
         }
 
         const { modelId, text, audioBase64, contentType } = await request.json();
