@@ -6,7 +6,12 @@
 
 const SHOW_ADVANCED_FORMATS = true; 
 const FORMAT_MAPPING = { mp3: { contentType: 'audio/mpeg', extension: 'mp3' }, wav: { contentType: 'audio/wav', extension: 'wav' }, flac: { contentType: 'audio/flac', extension: 'flac' }, opus: { contentType: 'audio/ogg', extension: 'opus' } };
-const STORAGE_KEY = 'ttsAppStorage_v14';
+
+// --- IndexedDB設定 ---
+const DB_NAME = 'TTSAppDB_v1';
+const DB_VERSION = 1;
+const STORE_NAME = 'appStorage';
+let db;
 
 // DOM要素取得 (全ファイルで共有)
 const modelSelectTTS = document.getElementById('model-select-tts'), modelSelectBG = document.getElementById('model-select-bg'), formatSelect = document.getElementById('format-select');
@@ -73,10 +78,69 @@ let r2GalleryState = {
     hasNextPage: false
 };
 
+// --- IndexedDBヘルパー関数 ---
+function openDB() {
+    return new Promise((resolve, reject) => {
+        if (db) {
+            return resolve(db);
+        }
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onerror = (event) => {
+            console.error("IndexedDB error:", event.target.error);
+            reject("IndexedDB error");
+        };
+        request.onsuccess = (event) => {
+            db = event.target.result;
+            resolve(db);
+        };
+        request.onupgradeneeded = (event) => {
+            const dbInstance = event.target.result;
+            if (!dbInstance.objectStoreNames.contains(STORE_NAME)) {
+                dbInstance.createObjectStore(STORE_NAME, { keyPath: 'key' });
+            }
+        };
+    });
+}
+
+async function setDB(key, value) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.put({ key, value });
+        request.onsuccess = () => resolve();
+        request.onerror = (event) => reject(event.target.error);
+    });
+}
+
+async function getDB(key) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get(key);
+        request.onsuccess = () => resolve(request.result ? request.result.value : undefined);
+        request.onerror = (event) => reject(event.target.error);
+    });
+}
+
 // --- 関数群 ---
 
-const loadState = () => { const savedState = localStorage.getItem(STORAGE_KEY); appState = savedState ? JSON.parse(savedState) : {}; appState.uiSettings = { ...defaultUiSettings, ...(appState.uiSettings || {}) }; };
-const saveState = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+const loadState = async () => {
+    const savedState = await getDB('appState');
+    appState = savedState || {};
+    appState.uiSettings = { ...defaultUiSettings, ...(appState.uiSettings || {}) };
+};
+
+const saveState = async () => {
+    try {
+        await setDB('appState', appState);
+    } catch (error) {
+        console.error("Failed to save state to IndexedDB:", error);
+        setStatus("設定の保存に失敗しました。", true);
+    }
+};
+
 const getModelData = (modelId) => { if (!appState[modelId]) { const modelName = originalModels.find(m => m.id === modelId)?.name || modelId; appState[modelId] = { displayName: modelName, images: [], activeImageId: null }; } return appState[modelId]; };
 const getActiveImage = (modelId) => modelId ? getModelData(modelId).images.find(img => img.id === getModelData(modelId).activeImageId) : null;
 const getCurrentModelId = () => modelSelectTTS.value;
@@ -486,3 +550,48 @@ function setupSettingsEventListeners() {
 
     exportAllSettingsBtn.addEventListener('click', exportAllSettings);
 }
+
+// =========================================================================
+// --- アプリケーション初期化 ---
+// =========================================================================
+
+async function initializeApp() {
+    try {
+        await loadState();
+
+        // UI設定を適用
+        applyUiSettings();
+        
+        // 外部で設定される originalModels を元に select を更新
+        updateSelectOptions();
+        
+        // ページ読み込み時にモデルが選択されていなければ最初のモデルを選択状態にする
+        if (modelSelectTTS.options.length > 0 && !modelSelectTTS.value) {
+           modelSelectTTS.selectedIndex = 0;
+        }
+        modelSelectBG.value = modelSelectTTS.value;
+
+        // 選択されているモデルのUIをレンダリング
+        renderUIForSelectedModel();
+        
+        // フォーマット表示を更新
+        updateFormatSelectVisibility();
+
+        // イベントリスナーを設定
+        setupSettingsEventListeners();
+        
+        // 初期タブを 'tts' に設定
+        const ttsTabButton = document.querySelector('.tab-button[data-tab="tts"]');
+        if (ttsTabButton) {
+            // 他のイベントリスナー設定後にクリックを発火
+            setTimeout(() => ttsTabButton.click(), 0);
+        }
+
+    } catch (error) {
+        console.error("Application initialization failed:", error);
+        setStatus("アプリケーションの初期化に失敗しました。ページをリロードしてください。", true);
+    }
+}
+
+// アプリケーションを初期化して実行
+initializeApp();
