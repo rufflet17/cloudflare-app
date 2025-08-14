@@ -441,7 +441,7 @@
         auth.onAuthStateChanged(updateUIForAuthState);
     })();
     
-    // --- R2ストレージ関連関数 (IndexedDB対応) ---
+    // --- R2ストレージ関連関数 ---
     
     function base64toBlob(base64, contentType = '', sliceSize = 512) {
         const byteCharacters = atob(base64);
@@ -456,6 +456,17 @@
             byteArrays.push(byteArray);
         }
         return new Blob(byteArrays, {type: contentType});
+    }
+
+    function getTestPostsFromSession() {
+        try {
+            const posts = sessionStorage.getItem('testPosts');
+            return posts ? JSON.parse(posts) : [];
+        } catch (e) {
+            console.error("Failed to parse test posts from sessionStorage:", e);
+            sessionStorage.removeItem('testPosts');
+            return [];
+        }
     }
     
     function renderR2Gallery(files) {
@@ -476,14 +487,12 @@
         files.forEach(file => {
             const card = document.createElement('div');
             card.className = 'player-card';
-            card.dataset.fileKey = file.is_test_post ? file.id : file.r2_key;
+            card.dataset.fileKey = file.r2_key;
             card.dataset.userId = file.user_id;
 
             const isTestPost = file.is_test_post;
-            
-            const modelProfile = appState.modelProfiles[file.model_name];
-            const modelDisplayName = modelProfile?.displayName || file.model_name;
 
+            const modelDisplayName = getModelData(file.model_name).displayName || file.model_name;
             const formatConfig = getFormatConfigByContentType(isTestPost ? file.content_type : `audio/${file.r2_key.split('.').pop()}`);
             const downloadFilename = createSafeFileName(file.model_name, file.text_content, formatConfig.extension);
             
@@ -499,7 +508,8 @@
             let audioSrc, downloadHref;
             if (isTestPost) {
                 try {
-                    const url = URL.createObjectURL(file.audio_blob);
+                    const blob = base64toBlob(file.audio_base_64, file.content_type);
+                    const url = URL.createObjectURL(blob);
                     audioSrc = url;
                     downloadHref = url;
                 } catch (e) {
@@ -560,6 +570,7 @@
         updateR2FilterStatusUI();
 
         try {
+            // サーバーからデータを取得
             const params = new URLSearchParams({ page: r2GalleryState.currentPage, filter: r2GalleryState.filter });
             if (r2GalleryState.modelId) params.append('modelId', r2GalleryState.modelId);
             if (r2GalleryState.searchText) params.append('searchText', r2GalleryState.searchText);
@@ -572,7 +583,8 @@
             const filesFromServer = await response.json();
             r2GalleryState.hasNextPage = filesFromServer.length === 10;
 
-            let allTestPosts = await db.getAll(STORES.TEST_POSTS);
+            // セッションからテスト投稿を取得し、現在のフィルターで絞り込む
+            let allTestPosts = getTestPostsFromSession();
             let filteredTestPosts = allTestPosts.filter(post => {
                 const state = r2GalleryState;
                 const currentUser = window.currentUser;
@@ -585,6 +597,7 @@
                 return true;
             });
             
+            // サーバーデータとテスト投稿を結合し、タイムスタンプでソート
             const combinedFiles = [...filesFromServer, ...filteredTestPosts];
             combinedFiles.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             
@@ -606,12 +619,14 @@
             return;
         }
         setStatus('テスト投稿を準備中...');
-        if(button) button.disabled = true;
+        button.disabled = true;
 
         let userId, username;
 
         try {
+            // ログイン状態に応じてユーザー情報を取得
             if (window.currentUser) {
+                // ログイン済みの場合は、バックエンドに問い合わせる
                 const response = await fetch('/api/my-profile');
                 if (!response.ok) {
                     const err = await response.json().catch(() => ({error: 'サーバーからプロファイルを取得できませんでした。'}));
@@ -621,34 +636,46 @@
                 userId = myProfile.userId;
                 username = myProfile.username;
             } else {
+                // 未ログインの場合
                 userId = 'local-user';
                 username = '自分 (未ログイン)';
             }
-            
-            const newPost = {
-                // idはautoIncrement
-                model_name: modelId,
-                text_content: text,
-                user_id: userId,
-                username: username,
-                audio_blob: blob, // Blobを直接保存
-                content_type: blob.type,
-                is_test_post: true,
-                created_at: new Date().toISOString(),
-                expiresAt: Date.now() + 24 * 60 * 60 * 1000 // 24時間後に有効期限切れ
-            };
+        
+            // FileReaderを使ってBase64に変換
+            const reader = new FileReader();
+            reader.readAsDataURL(blob);
+            reader.onloadend = () => {
+                const base64Audio = reader.result.split(',')[1];
+                const testPosts = getTestPostsFromSession();
+                
+                const newPost = {
+                    r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+                    model_name: modelId,
+                    text_content: text,
+                    user_id: userId,
+                    username: username,
+                    audio_base_64: base64Audio,
+                    content_type: blob.type,
+                    is_test_post: true,
+                    created_at: new Date().toISOString()
+                };
 
-            await db.put(STORES.TEST_POSTS, newPost);
-            setStatus('テスト投稿をローカルに保存しました。');
-            
-            const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
-            if (r2TabButton && !r2TabButton.classList.contains('locked-feature')) r2TabButton.click();
+                testPosts.unshift(newPost);
+                sessionStorage.setItem('testPosts', JSON.stringify(testPosts));
+                setStatus('テスト投稿をセッションに保存しました。');
+                
+                const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
+                if (r2TabButton) r2TabButton.click();
+            };
+            reader.onerror = () => {
+                throw new Error("ファイルの読み込みに失敗しました。");
+            };
 
         } catch (error) {
             console.error('Test post save error:', error);
             setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true);
         } finally {
-            if(button) button.disabled = false;
+            button.disabled = false;
         }
     }
 
@@ -668,11 +695,13 @@
                     });
                     if (!response.ok) {
                         const errorData = await response.json().catch(() => ({ error: response.statusText, reason: null }));
+                        // ★★★ 修正点: ミュート状態をチェックし、処理を分岐させる ★★★
                         if (response.status === 403 && errorData.reason === 'muted') {
-                            setStatus(errorData.error);
-                            await saveAudioAsTestPost(blob, modelId, text, button);
-                            return;
+                            setStatus(errorData.error); // バックエンドからのメッセージを表示
+                            await saveAudioAsTestPost(blob, modelId, text, button); // テスト投稿関数を呼び出す
+                            return; // R2保存処理はここで終了
                         }
+                        // ★★★ ここまで修正点 ★★★
                         throw new Error(`R2への保存に失敗: ${errorData.error}`);
                     }
                     const result = await response.json();
@@ -682,14 +711,20 @@
                 } catch (err) { console.error('R2 save error:', err); setStatus(err.message, true); } 
                 finally { if (button.disabled) { button.disabled = false; } }
             };
-            reader.onerror = (error) => { throw error; };
+            reader.onerror = (error) => {
+                 throw error;
+            };
         } catch (error) { console.error('File reading error:', error); setStatus('ファイルの読み込みに失敗しました。', true); button.disabled = false; }
     }
     
     function setupStorageEventListeners() {
+        // R2保存ボタン
         saveToR2Btn.addEventListener('click', () => saveAudioToR2(currentCombinedAudioBlob, getCurrentModelId(), currentCombinedAudioInfo.text, saveToR2Btn));
         savePreviewToR2Btn.addEventListener('click', () => saveAudioToR2(currentPreviewAudioBlob, getCurrentModelId(), currentPreviewAudioInfo.text, savePreviewToR2Btn));
         
+        // ★★★ 修正点: テスト投稿ボタンのイベントリスナーを削除 ★★★
+        
+        // ギャラリー操作
         refreshR2GalleryBtn.addEventListener('click', () => { r2GalleryState.currentPage = 1; r2GalleryState.userId = ''; loadR2Gallery(); });
         r2FilterMineToggle.addEventListener('change', () => { r2GalleryState.filter = r2FilterMineToggle.checked ? 'mine' : 'all'; r2GalleryState.currentPage = 1; r2GalleryState.userId = ''; loadR2Gallery(); });
         const handleSearch = () => { r2GalleryState.modelId = r2SearchModelSelect.value; r2GalleryState.searchText = r2SearchTextInput.value; r2GalleryState.currentPage = 1; r2GalleryState.userId = ''; loadR2Gallery(); };
@@ -708,15 +743,18 @@
                 const isTestPost = deleteButton.dataset.isTestPost === 'true';
 
                 if (isTestPost) {
-                    if (confirm(`このテスト投稿をローカルから削除しますか？`)) {
-                        await db.delete(STORES.TEST_POSTS, Number(fileKey));
+                    if (confirm(`このテスト投稿をセッションから削除しますか？`)) {
+                        let testPosts = getTestPostsFromSession();
+                        testPosts = testPosts.filter(p => p.r2_key !== fileKey);
+                        sessionStorage.setItem('testPosts', JSON.stringify(testPosts));
+                        
                         const audioEl = card.querySelector('audio');
                         if (audioEl && audioEl.src.startsWith('blob:')) {
                             URL.revokeObjectURL(audioEl.src);
                         }
                         card.remove();
                     }
-                } else {
+                } else { // 通常のR2投稿の削除
                     const downloadLink = card.querySelector('.download-link');
                     const filename = downloadLink ? downloadLink.download : fileKey;
                     if (confirm(`ファイル「${filename}」を完全に削除しますか？この操作は元に戻せません。`)) {
@@ -735,29 +773,11 @@
                 r2GalleryState.userId = card.dataset.userId;
                 r2GalleryState.currentPage = 1;
                 r2GalleryState.filter = 'all';
-                if(r2FilterMineToggle) r2FilterMineToggle.checked = false;
+                r2FilterMineToggle.checked = false;
                 loadR2Gallery();
             }
         });
     }
-    
-    // アプリケーション初期化処理
-    window.addEventListener('DOMContentLoaded', async () => {
-        // DB初期化 & 期限切れテスト投稿の削除
-        await db.deleteExpired(STORES.TEST_POSTS, 'expiresAt');
-        
-        // 全スクリプトでdbヘルパーを使えるようにグローバルに公開
-        window.db = db;
-        
-        // 残りの初期化処理
-        await loadSettings();
-        applyUiSettings();
-        updateFormatSelectVisibility();
-        setupSettingsEventListeners();
-        setupAudioEventListeners();
-        setupStorageEventListeners();
-    });
-
     </script>
 
     <!-- 分割されたJavaScriptファイル -->
