@@ -1,9 +1,0 @@
-# wrangler.toml
-
-# Cron Triggers の設定
-[pages.cron]
-# スケジュール: "*/1 * * * *" は「毎分」実行を意味します。
-"*/1 * * * *" = [
-  # 実行する関数のパス
-  "/tasks/update-timeline-cache"
-]
