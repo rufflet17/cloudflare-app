@@ -797,7 +797,7 @@
     }
 
     // =========================================================================
-    // --- 3. ストレージ (R2) ---
+    // --- 3. ストレージ (R2 & IndexedDB) ---
     // =========================================================================
     function base64toBlob(base64, contentType = '', sliceSize = 512) {
         const byteCharacters = atob(base64); const byteArrays = [];
@@ -812,9 +812,13 @@
 
     function renderR2Gallery(files) {
         r2GalleryContainer.querySelectorAll('audio[src^="blob:"]').forEach(audio => { URL.revokeObjectURL(audio.src); });
-        if (!files || files.length === 0) { r2GalleryContainer.innerHTML = r2GalleryState.currentPage === 1 ? '<p>条件に一致する音声はありません。</p>' : '<p>これ以上音声はありません。</p>'; return; }
+        if (!files || files.length === 0) {
+            r2GalleryContainer.innerHTML = r2GalleryState.currentPage === 1 ? '<p>条件に一致する音声はありません。</p>' : '<p>これ以上音声はありません。</p>';
+            return;
+        }
         r2GalleryContainer.innerHTML = '';
         const currentUid = window.currentUser ? window.currentUser.uid : null;
+        
         files.forEach(file => {
             const card = document.createElement('div'); card.className = 'player-card';
             card.dataset.fileKey = file.r2_key; card.dataset.userId = file.user_id;
@@ -827,6 +831,12 @@
             const ownerIndicator = isOwnFile ? ` <span class="is-own">(自分)</span>` : '';
             const deleteBtnDataAttr = isTestPost ? `data-is-test-post="true"` : '';
             const actionButton = (isOwnFile || isTestPost) ? `<button class="icon-btn btn-delete-r2" title="削除" ${deleteBtnDataAttr}>🗑️</button>` : `<button class="icon-btn btn-view-user-files" title="この投稿者の他の音声">👤</button>`;
+            
+            let ownerInfoHtml = '';
+            if (r2GalleryState.userId) {
+                ownerInfoHtml = `<span>${ownerUsername}${ownerIndicator}</span>`;
+            }
+
             let audioSrc, downloadHref;
             if (isTestPost) {
                 try { const blob = base64toBlob(file.audio_base_64, file.content_type); const url = URL.createObjectURL(blob); audioSrc = url; downloadHref = url; } catch (e) { console.error("Error creating blob URL for test post:", e); audioSrc = ''; downloadHref = '#'; }
@@ -836,7 +846,7 @@
                     <div style="margin-bottom: 8px;">
                         <div class="card-owner-info">
                             <span>${modelDisplayName}</span>
-                            <span>${ownerUsername}${ownerIndicator}</span>
+                            ${ownerInfoHtml}
                         </div>
                         <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p>
                     </div>
@@ -848,28 +858,36 @@
         });
     }
 
-    function updateR2FilterStatusUI() {
+    function updateR2FilterStatusUI(username = null) {
         if (r2GalleryState.userId) {
-            r2FilterStatus.innerHTML = `特定のユーザーの投稿を表示中 <button id="clear-user-filter-btn">フィルター解除</button>`;
+            const displayName = username ? `「${username}」さん` : '特定ユーザー';
+            r2FilterStatus.innerHTML = `${displayName}の投稿を表示中 <button id="clear-user-filter-btn">フィルター解除</button>`;
             r2FilterStatus.style.display = 'block';
             document.getElementById('clear-user-filter-btn').onclick = () => { r2GalleryState.userId = ''; loadR2Gallery(); };
-        } else { r2FilterStatus.style.display = 'none'; }
+        } else {
+            r2FilterStatus.style.display = 'none';
+        }
     }
+
     function updateR2PaginationUI() {
         r2PaginationControls.style.display = 'flex';
         r2PageInfo.textContent = `ページ ${r2GalleryState.currentPage}`;
         r2PrevPageBtn.disabled = r2GalleryState.currentPage <= 1 || r2GalleryState.isLoading;
         r2NextPageBtn.disabled = !r2GalleryState.hasNextPage || r2GalleryState.isLoading;
     }
+
     async function loadR2Gallery() {
         if (r2GalleryState.isLoading) return;
         r2GalleryState.isLoading = true; r2GalleryContainer.innerHTML = '<p>読み込み中...</p>';
-        updateR2PaginationUI(); updateR2FilterStatusUI();
+        updateR2PaginationUI();
+        updateR2FilterStatusUI(); // ユーザー名なしで一旦表示
+
         try {
             const params = new URLSearchParams({ page: r2GalleryState.currentPage, filter: r2GalleryState.filter });
             if (r2GalleryState.modelId) params.append('modelId', r2GalleryState.modelId);
             if (r2GalleryState.searchText) params.append('searchText', r2GalleryState.searchText);
             if (r2GalleryState.userId) params.append('userId', r2GalleryState.userId);
+            
             const response = await fetch(`/api/list?${params.toString()}`);
             if (!response.ok) { const errData = await response.json().catch(() => ({error: 'サーバーエラー'})); throw new Error(errData.error || '一覧の取得に失敗しました。'); }
             const filesFromServer = await response.json(); 
@@ -885,8 +903,14 @@
                 if (state.searchText && !post.text_content.toLowerCase().includes(state.searchText.toLowerCase())) return false;
                 return true;
             });
+
             const combinedFiles = [...filesFromServer, ...filteredTestPosts];
             combinedFiles.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            
+            if (r2GalleryState.userId && combinedFiles.length > 0) {
+                const filteredUsername = combinedFiles[0].username || '匿名ユーザー';
+                updateR2FilterStatusUI(filteredUsername);
+            }
             
             const filesToDisplay = combinedFiles.slice(0, 10);
             renderR2Gallery(filesToDisplay);
@@ -894,6 +918,7 @@
         } catch (error) { console.error('R2 gallery load error:', error); r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`; r2GalleryState.hasNextPage = false;
         } finally { r2GalleryState.isLoading = false; updateR2PaginationUI(); }
     }
+
     async function saveAudioAsTestPost(blob, modelId, text, button) {
         if (!blob || !modelId || !text) { setStatus('テスト投稿の対象データが不完全です。', true); return; }
         setStatus('テスト投稿を準備中...'); button.disabled = true;
@@ -925,6 +950,7 @@
         } catch (error) { console.error('Test post save error:', error); setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true);
         } finally { button.disabled = false; }
     }
+
     async function saveAudioToR2(blob, modelId, text, button) {
         if (!blob || !modelId || !text) { setStatus('保存対象の音声データが不完全です。', true); return; }
         setStatus('R2に音声を保存中...'); button.disabled = true;
