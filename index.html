@@ -1,3 +1,4 @@
+html
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -947,18 +948,28 @@
         updateR2FilterStatusUI(); // ユーザー名なしで一旦表示
 
         try {
-            const params = new URLSearchParams({ page: r2GalleryState.currentPage, filter: r2GalleryState.filter });
+            // 要件に基づき、デフォルトの表示数を50に設定
+            const PAGE_SIZE = 50;
+            // サーバーへのリクエストにページサイズ(limit)を追加
+            const params = new URLSearchParams({
+                page: r2GalleryState.currentPage,
+                filter: r2GalleryState.filter,
+                limit: PAGE_SIZE
+            });
             if (r2GalleryState.modelId) params.append('modelId', r2GalleryState.modelId);
             if (r2GalleryState.searchText) params.append('searchText', r2GalleryState.searchText);
             if (r2GalleryState.userId) params.append('userId', r2GalleryState.userId);
-            
+
             const response = await fetch(`/api/list?${params.toString()}`);
             if (!response.ok) { const errData = await response.json().catch(() => ({error: 'サーバーエラー'})); throw new Error(errData.error || '一覧の取得に失敗しました。'); }
-            const filesFromServer = await response.json(); 
-            r2GalleryState.hasNextPage = filesFromServer.length === 10;
-            
+            const filesFromServer = await response.json();
+            // 次のページが存在するかの判定をPAGE_SIZEに基づいて行う
+            r2GalleryState.hasNextPage = filesFromServer.length === PAGE_SIZE;
+
+            // ブラウザに保存されているテスト投稿を取得
             let allTestPosts = await getAllTestPosts();
 
+            // 現在のフィルター条件に合致するテスト投稿を絞り込み
             let filteredTestPosts = allTestPosts.filter(post => {
                 const state = r2GalleryState; const currentUser = window.currentUser;
                 if (state.filter === 'mine' && (!currentUser || post.user_id !== currentUser.uid)) return false;
@@ -968,16 +979,19 @@
                 return true;
             });
 
+            // サーバーからのデータと、ブラウザのテスト投稿を結合
             const combinedFiles = [...filesFromServer, ...filteredTestPosts];
+            // 結合した結果を作成日時の降順（新しいものが上）でソート
             combinedFiles.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            
+
+            // ユーザーフィルターが有効な場合、表示名を更新
             if (r2GalleryState.userId && combinedFiles.length > 0) {
                 const filteredUsername = combinedFiles[0].username || '匿名ユーザー';
                 updateR2FilterStatusUI(filteredUsername);
             }
-            
-            const filesToDisplay = combinedFiles.slice(0, 10);
-            renderR2Gallery(filesToDisplay);
+
+            // 結合・ソートした結果をすべて表示する
+            renderR2Gallery(combinedFiles);
 
         } catch (error) { console.error('R2 gallery load error:', error); r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`; r2GalleryState.hasNextPage = false;
         } finally { r2GalleryState.isLoading = false; updateR2PaginationUI(); }
