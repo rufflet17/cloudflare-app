@@ -17,9 +17,9 @@ async function getGooglePublicKeys() {
     const response = await fetch('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com');
     if (!response.ok) throw new Error('Failed to fetch Google public keys (JWK)');
     const jwks = await response.json();
-    googlePublicKeys = jwks.keys; // `keys`プロパティをキャッシュ
+    googlePublicKeys = jwks.keys;
     keysFetchTime = now;
-    return googlePublicKeys; // 鍵の配列を返す
+    return googlePublicKeys;
 }
 
 function base64UrlDecode(str) {
@@ -51,11 +51,8 @@ async function verifyFirebaseToken(token, env) {
         if (payload.iss !== `https://securetoken.google.com/${firebaseProjectId}`) throw new Error('Invalid issuer.');
         if (!payload.sub || payload.sub === '') throw new Error('Invalid subject (uid).');
 
-        // ★★★★★ バグ修正箇所 ★★★★★
-        // getGooglePublicKeysは既に鍵の配列を返すため、.keysは不要
         const publicKeys = await getGooglePublicKeys();
         const jwk = publicKeys.find(key => key.kid === header.kid);
-        // ★★★★★ ここまで ★★★★★
 
         if (!jwk) throw new Error('Public key not found for kid: ' + header.kid);
 
@@ -149,14 +146,6 @@ async function handleSynthesize({ request, env }) {
   }
 }
 
-// --- キャッシュパージヘルパー ---
-async function purgeCache(context, urlsToPurge) {
-    const cache = caches.default;
-    for (const url of urlsToPurge) {
-        await cache.delete(new Request(url, context.request));
-    }
-}
-
 // --- /api/* ルートのメインハンドラ ---
 async function handleApiRoutes(context) {
     const { request, env } = context;
@@ -225,7 +214,7 @@ async function handleUpload(context, decodedToken) {
         
         await env.MY_D1_DATABASE.prepare(`INSERT INTO audios (id, r2_key, user_id, model_name, text_content, created_at, is_deleted) VALUES (?, ?, ?, ?, ?, ?, 0)`).bind(d1Key, r2Key, user.uid, modelId, text, createdAt).run();
 
-        // メタデータ更新とチャンク化をバックグラウンドで実行
+        // メタデータ更新とチャンク化、キャッシュパージをバックグラウンドで実行
         context.waitUntil(updateMetadataAndChunks(context, user.uid, modelId));
 
         return new Response(JSON.stringify({ success: true, key: r2Key }), { status: 200 });
@@ -235,64 +224,73 @@ async function handleUpload(context, decodedToken) {
     }
 }
 
-async function getMetadataKey(params) {
+function getMetadataKey(params, decodedToken) {
     if (params.get('userId')) return `user_${params.get('userId')}`;
+    if (params.get('filter') === 'mine' && decodedToken) return `user_${decodedToken.sub}`;
     if (params.get('modelId')) return `model_${params.get('modelId')}`;
     return 'all';
 }
 
 async function handleList(context, decodedToken) {
     const { request, env } = context;
+    const url = new URL(request.url);
+    
+    // 検索テキストが含まれる場合はキャッシュしない
+    if (url.searchParams.has('searchText')) {
+        // キャッシュを使わない場合のロジックをここに実装
+        return await fetchFromD1WithoutCache(context, decodedToken);
+    }
+    
     const cache = caches.default;
     const cacheResponse = await cache.match(request);
     if (cacheResponse) return cacheResponse;
 
     try {
-        const url = new URL(request.url);
         const params = url.searchParams;
         const page = parseInt(params.get('page') || '1', 10);
         const limit = parseInt(params.get('limit') || '50', 10);
 
-        if (isNaN(page) || page < 1 || isNaN(limit) || limit < 1 || limit > 50) {
+        if (isNaN(page) || page < 1 || isNaN(limit) || limit < 1 || limit > ITEMS_PER_CHUNK) {
             return new Response(JSON.stringify({ error: "無効なページまたはリミットです。" }), { status: 400 });
         }
 
-        const metadataKey = await getMetadataKey(params);
+        const metadataKey = getMetadataKey(params, decodedToken);
         const metadata = await env.MY_D1_DATABASE.prepare("SELECT total_items FROM audio_metadata WHERE id = ?").bind(metadataKey).first();
         const totalItems = metadata ? metadata.total_items : 0;
-        if (totalItems === 0) return new Response("[]", { headers: { "Content-Type": "application/json" } });
-
-        const offset = (page - 1) * limit;
-        const recentItemsCount = totalItems % ITEMS_PER_CHUNK;
+        
         let results = [];
-
-        if (offset < recentItemsCount) { // 最新の未チャンク化データから取得
-            let conditions = ["a.is_deleted = 0"];
-            let bindings = [];
-            // ... (フィルタ条件の構築)
-            if (params.get('userId')) { conditions.push("a.user_id = ?"); bindings.push(params.get('userId')); }
-            else if (params.get('filter') === 'mine' && decodedToken) { conditions.push("a.user_id = ?"); bindings.push(decodedToken.sub); }
-            if (params.get('modelId')) { conditions.push("a.model_name = ?"); bindings.push(params.get('modelId')); }
-            if (params.get('searchText')) { conditions.push("a.text_content LIKE ?"); bindings.push(`%${params.get('searchText')}%`); }
-
-            const query = `SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id WHERE ${conditions.join(' AND ')} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
-            bindings.push(Math.min(limit, recentItemsCount - offset), offset);
-            
-            const { results: dbResults } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
-            results = dbResults;
-
-        } else { // チャンク化済みデータから取得
-            const chunkOffset = offset - recentItemsCount;
+        if (totalItems > 0) {
+            const offset = (page - 1) * limit;
+            const recentItemsCount = totalItems % ITEMS_PER_CHUNK;
             const totalChunks = Math.floor(totalItems / ITEMS_PER_CHUNK);
-            const chunkIndex = totalChunks - 1 - Math.floor(chunkOffset / ITEMS_PER_CHUNK);
             
-            if (chunkIndex >= 0) {
-                const chunkKey = `chunks/${metadataKey}/chunk_${chunkIndex}.json`;
-                const chunkObject = await env.MY_R2_BUCKET.get(chunkKey);
-                if (chunkObject) {
-                    const chunkData = await chunkObject.json();
-                    const offsetInChunk = chunkOffset % ITEMS_PER_CHUNK;
-                    results = chunkData.slice(offsetInChunk, offsetInChunk + limit);
+            if (offset < recentItemsCount) { 
+                // --- 最新の未チャンク化データから取得 ---
+                let conditions = ["a.is_deleted = 0"];
+                let bindings = [];
+                const [type, value] = metadataKey.split('_');
+                if (type === 'user') { conditions.push("a.user_id = ?"); bindings.push(value); }
+                if (type === 'model') { conditions.push("a.model_name = ?"); bindings.push(value); }
+
+                const query = `SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id WHERE ${conditions.join(' AND ')} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
+                bindings.push(limit, offset);
+                
+                const { results: dbResults } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
+                results = dbResults;
+
+            } else { 
+                // --- チャンク化済みデータから取得 ---
+                const chunkOffset = offset - recentItemsCount;
+                const chunkIndex = totalChunks - 1 - Math.floor(chunkOffset / ITEMS_PER_CHUNK);
+                
+                if (chunkIndex >= 0) {
+                    const chunkKey = `chunks/${metadataKey}/chunk_${chunkIndex}.json`;
+                    const chunkObject = await env.MY_R2_BUCKET.get(chunkKey);
+                    if (chunkObject) {
+                        const chunkData = await chunkObject.json();
+                        const offsetInChunk = chunkOffset % ITEMS_PER_CHUNK;
+                        results = chunkData.slice(offsetInChunk, offsetInChunk + limit);
+                    }
                 }
             }
         }
@@ -307,10 +305,35 @@ async function handleList(context, decodedToken) {
     }
 }
 
+// 検索時など、キャッシュを利用しない場合のフォールバック関数
+async function fetchFromD1WithoutCache(context, decodedToken) {
+    const { request, env } = context;
+    const url = new URL(request.url);
+    const params = url.searchParams;
+    const page = parseInt(params.get('page') || '1', 10);
+    const limit = parseInt(params.get('limit') || '50', 10);
+    const offset = (page - 1) * limit;
+
+    let conditions = ["a.is_deleted = 0"];
+    let bindings = [];
+    if (params.get('userId')) { conditions.push("a.user_id = ?"); bindings.push(params.get('userId')); }
+    else if (params.get('filter') === 'mine' && decodedToken) { conditions.push("a.user_id = ?"); bindings.push(decodedToken.sub); }
+    if (params.get('modelId')) { conditions.push("a.model_name = ?"); bindings.push(params.get('modelId')); }
+    if (params.get('searchText')) { conditions.push("a.text_content LIKE ?"); bindings.push(`%${params.get('searchText')}%`); }
+
+    const query = `SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id WHERE ${conditions.join(' AND ')} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
+    bindings.push(limit, offset);
+    
+    const { results: dbResults } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
+    return new Response(JSON.stringify(dbResults || []), { headers: { "Content-Type": "application/json" } });
+}
+
+
 async function handleGet(request, env, key) {
     try {
+        // 論理削除されていないかD1でチェック
         const d1_entry = await env.MY_D1_DATABASE.prepare("SELECT id FROM audios WHERE r2_key = ? AND is_deleted = 0").bind(key).first();
-        if (!d1_entry) return new Response("Object Not Found", { status: 404 });
+        if (!d1_entry) return new Response("Object Not Found or has been deleted", { status: 404 });
 
         const object = await env.MY_R2_BUCKET.get(key);
         if (object === null) return new Response("Object Not Found in R2", { status: 404 });
@@ -328,20 +351,19 @@ async function handleGet(request, env, key) {
 }
 
 async function handleLogicalDelete(context, decodedToken, key) {
-    const { request, env } = context;
+    const { env } = context;
     if (!decodedToken || !decodedToken.sub) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
     const user = { uid: decodedToken.sub };
 
     try {
-        // 削除対象の情報を取得
         const audioInfo = await env.MY_D1_DATABASE.prepare("SELECT user_id, model_name FROM audios WHERE r2_key = ? AND is_deleted = 0").bind(key).first();
         if (!audioInfo || audioInfo.user_id !== user.uid) {
             return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404 });
         }
         
-        await env.MY_D1_DATABASE.prepare(`UPDATE audios SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP WHERE r2_key = ? AND user_id = ?`).bind(key, user.uid).run();
+        await env.MY_D1_DATABASE.prepare(`UPDATE audios SET is_deleted = 1, deleted_at = ? WHERE r2_key = ? AND user_id = ?`).bind(new Date().toISOString(), key, user.uid).run();
 
-        // メタデータ更新（総数をデクリメント）とキャッシュパージ
+        // メタデータ更新とキャッシュパージをバックグラウンドで実行
         context.waitUntil(decrementMetadataAndPurge(context, user.uid, audioInfo.model_name));
         
         return new Response(JSON.stringify({ success: true, key: key }), { status: 200 });
@@ -351,7 +373,7 @@ async function handleLogicalDelete(context, decodedToken, key) {
     }
 }
 
-// --- プロファイルハンドラー (変更なし) ---
+// --- プロファイルハンドラー ---
 async function handleProfile(request, env, decodedToken) {
     const userId = decodedToken.sub;
     if (request.method === 'GET') {
@@ -364,6 +386,8 @@ async function handleProfile(request, env, decodedToken) {
             const { username } = await request.json();
             if (!username || username.trim().length === 0 || username.length > 20) return new Response(JSON.stringify({ error: "表示名は1文字以上20文字以内で入力してください。" }), { status: 400 });
             await env.MY_D1_DATABASE.prepare(`INSERT INTO user_profiles (user_id, username) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET username = excluded.username`).bind(userId, username.trim()).run();
+            // ユーザーごとのリストキャッシュをパージ
+            await purgeRelatedCaches(context, userId, null);
             return new Response(JSON.stringify({ success: true, username: username.trim() }), { status: 200 });
         } catch (e) {
             console.error("Profile update failed:", e);
@@ -390,13 +414,14 @@ async function handleMyProfile(request, env, decodedToken) {
 async function updateMetadataAndChunks(context, userId, modelId) {
     const { env } = context;
     const metadataKeys = ['all', `user_${userId}`, `model_${modelId}`];
+    const now = new Date().toISOString();
     
     for (const key of metadataKeys) {
         const { total_items: newTotalItems } = await env.MY_D1_DATABASE.prepare(
             `INSERT INTO audio_metadata (id, total_items, last_updated) VALUES (?, 1, ?)
              ON CONFLICT(id) DO UPDATE SET total_items = total_items + 1, last_updated = ?
              RETURNING total_items`
-        ).bind(key, new Date().toISOString(), new Date().toISOString()).first();
+        ).bind(key, now, now).first();
         
         if (newTotalItems > 0 && newTotalItems % ITEMS_PER_CHUNK === 0) {
             await createChunk(env, key, newTotalItems);
@@ -406,10 +431,11 @@ async function updateMetadataAndChunks(context, userId, modelId) {
 }
 
 async function decrementMetadataAndPurge(context, userId, modelId) {
+    const { env } = context;
     const metadataKeys = ['all', `user_${userId}`, `model_${modelId}`];
     for (const key of metadataKeys) {
-        await context.env.MY_D1_DATABASE.prepare(
-            `UPDATE audio_metadata SET total_items = total_items - 1, last_updated = ? WHERE id = ?`
+        await env.MY_D1_DATABASE.prepare(
+            `UPDATE audio_metadata SET total_items = MAX(0, total_items - 1), last_updated = ? WHERE id = ?`
         ).bind(new Date().toISOString(), key).run();
     }
     // 削除時はチャンク再生成はせず、キャッシュパージのみ
@@ -417,16 +443,19 @@ async function decrementMetadataAndPurge(context, userId, modelId) {
 }
 
 async function createChunk(env, metadataKey, totalItems) {
-    const chunkIndex = Math.floor(totalItems / ITEMS_PER_CHUNK) - 1;
-    if (chunkIndex < 0) return;
+    // チャンク化するアイテム数は常にITEMS_PER_CHUNK個
+    const offset = totalItems - ITEMS_PER_CHUNK;
+    if (offset < 0) return; // totalItemsが50未満の場合は何もしない
 
+    const chunkIndex = Math.floor(offset / ITEMS_PER_CHUNK);
+    
     let conditions = ["a.is_deleted = 0"];
     let bindings = [];
     const [type, value] = metadataKey.split('_');
     if (type === 'user') { conditions.push("a.user_id = ?"); bindings.push(value); }
     if (type === 'model') { conditions.push("a.model_name = ?"); bindings.push(value); }
-
-    const offset = totalItems - ITEMS_PER_CHUNK;
+    
+    // 特定の50件を取得するためのクエリ
     const query = `SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id WHERE ${conditions.join(' AND ')} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
     bindings.push(ITEMS_PER_CHUNK, offset);
     
@@ -437,29 +466,32 @@ async function createChunk(env, metadataKey, totalItems) {
         await env.MY_R2_BUCKET.put(chunkR2Key, JSON.stringify(results), {
             httpMetadata: { 
                 contentType: 'application/json',
-                // チャンクは長期間キャッシュ
-                cacheControl: 'public, max-age=31536000, immutable'
+                cacheControl: 'public, max-age=31536000, immutable' // 1年間キャッシュ
             },
         });
     }
 }
 
 async function purgeRelatedCaches(context, userId, modelId) {
-    // APIのキャッシュをパージする
-    //
-    // 注意: Cache APIの`delete`は完全なURLマッチングが必要です。
-    // クエリパラメータが多岐にわたる場合、この方法は不完全になる可能性があります。
-    // その場合は、レスポンスに `Cache-Control: no-cache` を設定するか、
-    // Cache Purge by Tag (Enterpriseプラン) の利用を検討します。
-    // ここでは、基本的なURLのキャッシュを削除する試みを行います。
+    const cache = caches.default;
     const baseUrl = new URL(context.request.url).origin;
+    
+    // パージ対象のURLリストを生成
+    // ページ1のキャッシュを削除することで、最新の投稿が反映されるようにする
     const urlsToPurge = [
-        `${baseUrl}/api/list?limit=50&page=1`,
-        `${baseUrl}/api/list?limit=50&page=1&userId=${userId}`,
-        `${baseUrl}/api/list?limit=50&page=1&modelId=${encodeURIComponent(modelId)}`,
+        new URL(`${baseUrl}/api/list?filter=all&limit=${ITEMS_PER_CHUNK}&page=1`),
     ];
-    // purgeCacheヘルパーを呼び出す際に、第2引数にRequestオブジェクトを渡すように修正
+    if (userId) {
+        urlsToPurge.push(new URL(`${baseUrl}/api/list?filter=all&limit=${ITEMS_PER_CHUNK}&page=1&userId=${userId}`));
+        urlsToPurge.push(new URL(`${baseUrl}/api/list?filter=mine&limit=${ITEMS_PER_CHUNK}&page=1`));
+    }
+    if (modelId) {
+        const encodedModelId = encodeURIComponent(modelId);
+        urlsToPurge.push(new URL(`${baseUrl}/api/list?filter=all&limit=${ITEMS_PER_CHUNK}&page=1&modelId=${encodedModelId}`));
+    }
+    
+    // 各URLのキャッシュを削除
     for (const url of urlsToPurge) {
-        await context.caches.default.delete(new Request(url, context.request));
+        await cache.delete(new Request(url, { headers: context.request.headers }), { ignoreMethod: true });
     }
 }
