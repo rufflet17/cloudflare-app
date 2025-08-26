@@ -9,6 +9,8 @@
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+    <!-- 音声編集モジュール -->
+    <script src="audio_editing.js"></script>
     <style>
         :root {
             --primary-color: #007bff; --primary-hover-color: #0056b3;
@@ -294,7 +296,7 @@
     <script>
     // --- グローバル定数、DOM要素、状態管理変数 ---
     const SHOW_ADVANCED_FORMATS = true;
-    const FORMAT_MAPPING = { mp3: { contentType: 'audio/mpeg', extension: 'mp3' }, wav: { contentType: 'audio/wav', extension: 'wav' }, flac: { contentType: 'audio/flac', extension: 'flac' }, opus: { contentType: 'audio/ogg', extension: 'opus' } };
+    // FORMAT_MAPPINGはaudio_editing.jsからAudioEditing.FORMAT_MAPPINGとして参照します
     
     const modelSelectTTS = document.getElementById('model-select-tts'), modelSelectBG = document.getElementById('model-select-bg'), formatSelect = document.getElementById('format-select');
     const generateBtn = document.getElementById('generate-btn'), generatePreviewBtn = document.getElementById('generate-preview-btn');
@@ -347,7 +349,6 @@
     let dragStart = { mouseX: 0, mouseY: 0, pixelX: 0, pixelY: 0 };
     let panStart = { touchX: 0, touchY: 0, pixelX: 0, pixelY: 0 };
     let animationFrameId = null;
-    const audioContextForDecoding = new (window.AudioContext || window.webkitAudioContext)();
     const R2_ITEMS_PER_PAGE = 50;
     let r2GalleryState = { currentPage: 1, filter: 'all', modelId: '', searchText: '', userId: '', isLoading: false, hasNextPage: false };
     let auth; // Firebase Auth instance
@@ -1046,115 +1047,14 @@
     // =========================================================================
     // --- 4. 音声生成と音声加工 ---
     // =========================================================================
-    function createSilence(durationSeconds, format, sampleRate = 44100, channels = 1, bitDepth = 16) {
-        if (format === 'wav') {
-            const bytesPerSample = bitDepth / 8; const blockAlign = channels * bytesPerSample;
-            const numSamples = Math.round(sampleRate * durationSeconds); const dataSize = numSamples * blockAlign;
-            const buffer = new ArrayBuffer(44 + dataSize); const view = new DataView(buffer);
-            view.setUint32(0, 0x52494646, false); view.setUint32(4, 36 + dataSize, true); view.setUint32(8, 0x57415645, false);
-            view.setUint32(12, 0x666d7420, false); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
-            view.setUint16(22, channels, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * blockAlign, true);
-            view.setUint16(32, blockAlign, true); view.setUint16(34, bitDepth, true); view.setUint32(36, 0x64617461, false);
-            view.setUint32(40, dataSize, true); const blob = new Blob([buffer], { type: 'audio/wav' }); blob.isSilence = true; return blob;
-        } else if (format === 'mp3') {
-            const silentFrame = new Uint8Array([0xff, 0xfb, 0x10, 0xc4, 0x00, 0x00, 0x00, 0x03, 0x48, 0x00, 0x00, 0x00, 0x00, 0x4c, 0x41, 0x4d, 0x45, 0x33, 0x2e, 0x31, 0x30, 0x30]);
-            const frameDuration = 1152 / 44100; const numFrames = Math.ceil(durationSeconds / frameDuration);
-            const silentFrames = []; for (let i = 0; i < numFrames; i++) { silentFrames.push(silentFrame); }
-            const blob = new Blob(silentFrames, { type: 'audio/mpeg' }); blob.isSilence = true; return blob;
-        }
-        return null;
-    }
+    // 音声処理関数群は audio_editing.js に移動しました。
+    // ここではそれらを呼び出すUIロジックを記述します。
 
-    function findDataChunk(view) {
-        let offset = 12; const byteLength = view.byteLength;
-        while (offset < byteLength) {
-            if (offset + 8 > byteLength) break;
-            const chunkId = String.fromCharCode(view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3));
-            let chunkSize = view.getUint32(offset + 4, true);
-            if (chunkId === 'data') {
-                if (offset + 8 + chunkSize > byteLength) { console.warn("WAV data chunk size is larger than file. Using remaining bytes."); chunkSize = byteLength - (offset + 8); }
-                return { offset: offset + 8, size: chunkSize };
-            }
-            offset += 8 + chunkSize; if (chunkSize % 2 !== 0) { offset += 1; }
-        }
-        console.error('Could not find "data" chunk in WAV file.'); return null;
-    }
-
-    const mergeWavBlobs = async (blobs) => {
-        const audioDataParts = []; let sampleRate, channels, bitDepth; let totalDataSize = 0;
-        for (const blob of blobs) {
-            if (blob.size < 44) { if(blob.size > 0) console.warn("Skipping a blob that is too small to be a valid WAV file."); continue; }
-            const buffer = await blob.arrayBuffer(); const view = new DataView(buffer);
-            if (!sampleRate) { sampleRate = view.getUint32(24, true); channels = view.getUint16(22, true); bitDepth = view.getUint16(34, true); }
-            const dataChunk = findDataChunk(view);
-            if (dataChunk && dataChunk.size > 0) { const audioData = new Uint8Array(buffer, dataChunk.offset, dataChunk.size); audioDataParts.push(audioData); totalDataSize += dataChunk.size; }
-        }
-        if (totalDataSize === 0) return null;
-        const bytesPerSample = bitDepth / 8; const blockAlign = channels * bytesPerSample; const byteRate = sampleRate * blockAlign;
-        const headerBuffer = new ArrayBuffer(44); const headerView = new DataView(headerBuffer);
-        headerView.setUint32(0, 0x52494646, false); headerView.setUint32(4, 36 + totalDataSize, true); headerView.setUint32(8, 0x57415645, false);
-        headerView.setUint32(12, 0x666d7420, false); headerView.setUint32(16, 16, true); headerView.setUint16(20, 1, true);
-        headerView.setUint16(22, channels, true); headerView.setUint32(24, sampleRate, true); headerView.setUint32(28, byteRate, true);
-        headerView.setUint16(32, blockAlign, true); headerView.setUint16(34, bitDepth, true); headerView.setUint32(36, 0x64617461, false);
-        headerView.setUint32(40, totalDataSize, true);
-        const combinedBlobParts = [new Uint8Array(headerBuffer), ...audioDataParts];
-        return new Blob(combinedBlobParts, { type: 'audio/wav' });
+    const getFormatConfigByContentType = (contentType) => {
+        if (!contentType) return { extension: 'bin', contentType: 'application/octet-stream' };
+        return Object.values(AudioEditing.FORMAT_MAPPING).find(config => config.contentType === contentType.split(';')[0].trim()) || { extension: 'bin', contentType };
     };
-
-    const combineAudioBlobs = async (blobs, intervals) => {
-        if (!blobs || blobs.length === 0) return null;
-        const combinedParts = []; const format = formatSelect.value === 'wav' ? 'wav' : blobs[0].type.split('/')[1];
-        for (let i = 0; i < blobs.length; i++) {
-            combinedParts.push(blobs[i]);
-            if (i < intervals.length && intervals[i] > 0) { const silence = createSilence(intervals[i], format === 'mp3' ? 'mp3' : 'wav'); if (silence) combinedParts.push(silence); }
-        }
-        if (format === 'mp3') return await mergeMp3Blobs(combinedParts);
-        if (format === 'wav') return await mergeWavBlobs(combinedParts);
-        return new Blob(combinedParts, { type: FORMAT_MAPPING[format]?.contentType || blobs[0].type });
-    };
-
-    const mergeMp3Blobs = async (blobs) => {
-        const processedBuffers = [];
-        for (let i = 0; i < blobs.length; i++) {
-            const blob = blobs[i]; const buffer = new Uint8Array(await blob.arrayBuffer());
-            if (buffer.length === 0) continue;
-            if (blob.isSilence) { processedBuffers.push(buffer); continue; }
-            let offset = 0;
-            if (i > 0) {
-                const view = new DataView(buffer.buffer);
-                if (buffer.length > 10 && view.getUint32(0, false) >> 8 === 0x494433) { const size = (view.getUint8(6) << 21) | (view.getUint8(7) << 14) | (view.getUint8(8) << 7) | view.getUint8(9); offset = 10 + size; }
-            }
-            let end = buffer.length;
-            if (i < blobs.length - 1) { const view = new DataView(buffer.buffer); if (buffer.length > 128 && view.getUint32(buffer.length - 128, false) >> 8 === 0x544147) { end -= 128; } }
-            processedBuffers.push(buffer.slice(offset, end));
-        }
-        return new Blob(processedBuffers, { type: 'audio/mpeg' });
-    };
-
-    const getFormatConfigByContentType = (contentType) => { if (!contentType) return { extension: 'bin', contentType: 'application/octet-stream' }; return Object.values(FORMAT_MAPPING).find(config => config.contentType === contentType.split(';')[0].trim()) || { extension: 'bin', contentType }; };
     
-    async function processServerResponseAudio(base64Data, contentType) {
-        const rawBlob = base64toBlob(base64Data, contentType);
-        if (formatSelect.value === 'wav' && (contentType.includes('flac') || contentType.includes('x-flac'))) {
-            try { const arrayBuffer = await rawBlob.arrayBuffer(); const audioBuffer = await audioContextForDecoding.decodeAudioData(arrayBuffer); return audioBufferToWav(audioBuffer); }
-            catch (error) { console.error('FLAC to WAV decoding failed:', error); throw new Error('FLACからWAVへの変換に失敗しました。'); }
-        }
-        return rawBlob;
-    }
-
-    function audioBufferToWav(buffer) {
-        const numOfChan = buffer.numberOfChannels; const length = buffer.length * numOfChan * 2 + 44;
-        const arrayBuffer = new ArrayBuffer(length); const view = new DataView(arrayBuffer);
-        const channels = []; let i, sample, pos = 0;
-        const setUint16 = (data) => { view.setUint16(pos, data, true); pos += 2; }; const setUint32 = (data) => { view.setUint32(pos, data, true); pos += 4; };
-        setUint32(0x46464952); setUint32(length - 8); setUint32(0x45564157); setUint32(0x20746d66); setUint32(16); setUint16(1); setUint16(numOfChan);
-        setUint32(buffer.sampleRate); setUint32(buffer.sampleRate * 2 * numOfChan); setUint16(numOfChan * 2); setUint16(16); setUint32(0x61746164);
-        setUint32(length - pos - 4);
-        for (i = 0; i < numOfChan; i++) { channels.push(buffer.getChannelData(i)); }
-        while (pos < length) { for (i = 0; i < buffer.length; i++) { for (let chan = 0; chan < numOfChan; chan++) { sample = Math.max(-1, Math.min(1, channels[chan][i])); sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0; view.setInt16(pos, sample, true); pos += 2; } } }
-        return new Blob([view], { type: "audio/wav" });
-    }
-
     const createSafeFileName = (modelId, text, extension) => {
         const cleanModelId = (modelId || 'UnknownModelId').replace(/[\\/:*?"<>|]/g, '_').trim();
         const cleanText = (text || 'NoText').substring(0, 30).replace(/[\\/:*?"<>|]/g, '_').trim();
@@ -1227,9 +1127,15 @@
                 </div>
             </div>`;
         if (result.status === 'success') {
-            try { const audioBlob = await processServerResponseAudio(result.audio_base_64, result.content_type); resultStates[cardId] = { initialText: result.text, history: [{ blob: audioBlob, text: result.text }], currentIndex: 0, error: null, audioUrl: null };
-            } catch (error) { resultStates[cardId] = { initialText: result.text, history: [], currentIndex: -1, error: error.message, audioUrl: null }; }
-        } else { resultStates[cardId] = { initialText: result.text, history: [], currentIndex: -1, error: result.reason || null, audioUrl: null }; }
+            try { 
+                const audioBlob = await AudioEditing.processServerResponseAudio(result.audio_base_64, result.content_type, formatSelect.value); 
+                resultStates[cardId] = { initialText: result.text, history: [{ blob: audioBlob, text: result.text }], currentIndex: 0, error: null, audioUrl: null };
+            } catch (error) { 
+                resultStates[cardId] = { initialText: result.text, history: [], currentIndex: -1, error: error.message, audioUrl: null }; 
+            }
+        } else { 
+            resultStates[cardId] = { initialText: result.text, history: [], currentIndex: -1, error: result.reason || null, audioUrl: null }; 
+        }
         if (insertAfterCard) { insertAfterCard.after(card); } else { resultsContainer.appendChild(card); }
         updateCardUI(cardId); updateAllCardUIs(); return card;
     };
@@ -1254,7 +1160,7 @@
         if (regenBtn) regenBtn.disabled = false; cardStatus.textContent = '';
         if (results && results[0] && results[0].status === 'success') {
             try {
-                const newBlob = await processServerResponseAudio(results[0].audio_base_64, results[0].content_type);
+                const newBlob = await AudioEditing.processServerResponseAudio(results[0].audio_base_64, results[0].content_type, formatSelect.value);
                 addHistoryEntry(cardId, { blob: newBlob, text: currentText }); state.error = null; updateCardUI(cardId);
             } catch (error) { state.error = error.message; updateCardUI(cardId); }
         } else { const reason = (results && results[0] && results[0].reason) || '不明なエラー'; state.error = reason; updateCardUI(cardId); }
@@ -1488,13 +1394,21 @@
             let successCount = 0; const successfulBlobs = [];
             for (const result of results) {
                 await addResultCard(result);
-                if (result.status === 'success') { try { const decodedBlob = await processServerResponseAudio(result.audio_base_64, result.content_type); successfulBlobs.push(decodedBlob); successCount++; } catch (e) { console.error("Audio decoding failed for preview:", e); } }
+                if (result.status === 'success') { 
+                    try { 
+                        const decodedBlob = await AudioEditing.processServerResponseAudio(result.audio_base_64, result.content_type, formatSelect.value); 
+                        successfulBlobs.push(decodedBlob); 
+                        successCount++; 
+                    } catch (e) { 
+                        console.error("Audio decoding failed for preview:", e); 
+                    } 
+                }
             }
             if (successCount > 0) { setStatus(`${successCount} / ${results.length} 件の音声を生成しました。「合成結果」タブで個別に確認・ダウンロードできます。`); }
             else { setStatus(`音声の生成に失敗しました。「合成結果」タブでエラー内容を確認してください。`, true); }
             if (successfulBlobs.length > 0) {
                 if (combinedAudioPlayer.src) URL.revokeObjectURL(combinedAudioPlayer.src);
-                const combinedBlob = await combineAudioBlobs(successfulBlobs, []);
+                const combinedBlob = await AudioEditing.combineAudioBlobs(successfulBlobs, [], formatSelect.value);
                 if(combinedBlob) {
                     currentCombinedAudioBlob = combinedBlob; const url = URL.createObjectURL(combinedBlob);
                     combinedAudioPlayer.src = url; const formatConfig = getFormatConfigByContentType(combinedBlob.type);
@@ -1534,127 +1448,49 @@
             const hasNegativeInterval = intervals.some(interval => interval < 0);
             const hasPositiveInterval = intervals.some(interval => interval > 0);
             
-            let finalFormat = formatSelect.value;
             let statusMessage = '音声ファイルを結合中...';
-            let combinedBlob;
-
-            if (hasNegativeInterval || hasPositiveInterval) {
-                finalFormat = 'wav';
-                if (hasNegativeInterval) {
-                    statusMessage = '音声を重ね合わせるため、WAV形式で結合します...';
-                } else {
-                    statusMessage = '無音区間を挟むため、WAV形式で結合します...';
-                }
-                setStatus(statusMessage);
-                generatePreviewBtn.disabled = true;
-
-                try {
-                    const decodedBuffers = await Promise.all(validAudios.map(audio => audio.blob.arrayBuffer().then(buffer => audioContextForDecoding.decodeAudioData(buffer))));
-                    const sampleRate = decodedBuffers[0].sampleRate;
-                    const numberOfChannels = Math.max(...decodedBuffers.map(b => b.numberOfChannels));
-
-                    const startOffsetsInSamples = [0];
-                    for (let i = 0; i < intervals.length; i++) {
-                        const prevBufferLength = decodedBuffers[i].length;
-                        const intervalInSamples = Math.round(intervals[i] * sampleRate);
-                        const nextOffset = startOffsetsInSamples[i] + prevBufferLength + intervalInSamples;
-                        startOffsetsInSamples.push(nextOffset);
-                    }
-                    
-                    const minOffset = Math.min(...startOffsetsInSamples);
-                    let totalLengthInSamples = 0;
-                    let offsetShift = 0;
-
-                    if (minOffset < 0) {
-                        offsetShift = -minOffset;
-                    }
-
-                    for(let i=0; i<startOffsetsInSamples.length; i++) {
-                        startOffsetsInSamples[i] += offsetShift;
-                        if(decodedBuffers[i]){
-                            const endPosition = startOffsetsInSamples[i] + decodedBuffers[i].length;
-                            totalLengthInSamples = Math.max(totalLengthInSamples, endPosition);
-                        }
-                    }
-
-                    const mergedBuffer = audioContextForDecoding.createBuffer(numberOfChannels, totalLengthInSamples, sampleRate);
-
-                    for (let i = 0; i < decodedBuffers.length; i++) {
-                        const bufferToMix = decodedBuffers[i];
-                        const offset = startOffsetsInSamples[i];
-                        for (let channel = 0; channel < numberOfChannels; channel++) {
-                            if (channel < bufferToMix.numberOfChannels) {
-                                const outputData = mergedBuffer.getChannelData(channel);
-                                const inputData = bufferToMix.getChannelData(channel);
-                                for (let j = 0; j < inputData.length; j++) {
-                                    const outputIndex = offset + j;
-                                    if (outputIndex >= 0 && outputIndex < totalLengthInSamples) {
-                                        outputData[outputIndex] += inputData[j];
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    let maxAmplitude = 0;
-                    for (let channel = 0; channel < numberOfChannels; channel++) {
-                        const channelData = mergedBuffer.getChannelData(channel);
-                        for (let i = 0; i < channelData.length; i++) {
-                            maxAmplitude = Math.max(maxAmplitude, Math.abs(channelData[i]));
-                        }
-                    }
-
-                    if (maxAmplitude > 1.0) {
-                        const gain = 1.0 / maxAmplitude;
-                        for (let channel = 0; channel < numberOfChannels; channel++) {
-                            const channelData = mergedBuffer.getChannelData(channel);
-                            for (let i = 0; i < channelData.length; i++) {
-                                channelData[i] *= gain;
-                            }
-                        }
-                    }
-
-                    combinedBlob = audioBufferToWav(mergedBuffer);
-                } catch (error) {
-                    console.error("WAVへのデコード・結合中にエラー:", error);
-                    setStatus(`WAVへのデコード・結合に失敗しました: ${error.message}`, true);
-                    generatePreviewBtn.disabled = false;
-                    return;
-                }
-            } else {
-                setStatus(statusMessage);
-                generatePreviewBtn.disabled = true;
-                const blobs = validAudios.map(a => a.blob);
-                combinedBlob = await combineAudioBlobs(blobs, []);
+            if (hasNegativeInterval) {
+                statusMessage = '音声を重ね合わせるため、WAV形式で結合します...';
+            } else if (hasPositiveInterval) {
+                statusMessage = '無音区間を挟むため、WAV形式で結合します...';
             }
+            setStatus(statusMessage);
+            generatePreviewBtn.disabled = true;
 
-            if (!combinedBlob) {
-                setStatus('音声の結合に失敗しました。', true);
+            try {
+                const { combinedBlob, finalFormat } = await AudioEditing.createAdvancedCombinedAudio(validAudios, intervals);
+
+                if (!combinedBlob) {
+                    throw new Error('音声の結合に失敗しました。');
+                }
+
+                setStatus('結合プレビューが生成されました。');
+
+                if (combinedPreviewPlayer.src) URL.revokeObjectURL(combinedPreviewPlayer.src);
+                currentPreviewAudioBlob = combinedBlob;
+                const formatConfig = AudioEditing.FORMAT_MAPPING[finalFormat] || AudioEditing.FORMAT_MAPPING['wav'];
+                const combinedTextForFilename = validAudios.map(a => a.text).join('_');
+                currentPreviewAudioInfo.text = validAudios.map(a => a.text).join('\n');
+                currentPreviewAudioInfo.filename = createSafeFileName(getCurrentModelId(), combinedTextForFilename, formatConfig.extension);
+                
+                const url = URL.createObjectURL(combinedBlob);
+                combinedPreviewPlayer.src = url;
+                combinedPreviewArea.style.display = 'block';
+                downloadCombinedPreviewBtn.textContent = `この結合音声 (${finalFormat.toUpperCase()}) をダウンロード`;
+                downloadCombinedPreviewBtn.onclick = () => {
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = currentPreviewAudioInfo.filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                };
+            } catch (error) {
+                console.error("Error during preview generation:", error);
+                setStatus(error.message, true);
+            } finally {
                 generatePreviewBtn.disabled = false;
-                return;
             }
-
-            setStatus('結合プレビューが生成されました。');
-            generatePreviewBtn.disabled = false;
-
-            if (combinedPreviewPlayer.src) URL.revokeObjectURL(combinedPreviewPlayer.src);
-            currentPreviewAudioBlob = combinedBlob;
-            const formatConfig = FORMAT_MAPPING[finalFormat] || FORMAT_MAPPING['wav'];
-            const combinedTextForFilename = validAudios.map(a => a.text).join('_');
-            currentPreviewAudioInfo.text = validAudios.map(a => a.text).join('\n');
-            currentPreviewAudioInfo.filename = createSafeFileName(getCurrentModelId(), combinedTextForFilename, formatConfig.extension);
-            const url = URL.createObjectURL(combinedBlob);
-            combinedPreviewPlayer.src = url;
-            combinedPreviewArea.style.display = 'block';
-            downloadCombinedPreviewBtn.textContent = `この結合音声 (${finalFormat.toUpperCase()}) をダウンロード`;
-            downloadCombinedPreviewBtn.onclick = () => {
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = currentPreviewAudioInfo.filename;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-            };
         });
         addFirstCardBtn.addEventListener('click', () => addResultCard({ status: 'empty', text: '' }));
     }

@@ -10,15 +10,16 @@ let keysFetchTime = 0;
 
 async function getGooglePublicKeys() {
     const now = Date.now();
-    if (googlePublicKeys && (now - keysFetchTime < 3600 * 1000)) { // 1時間キャッシュ
+    // 1時間キャッシュを利用
+    if (googlePublicKeys && (now - keysFetchTime < 3600 * 1000)) {
         return googlePublicKeys;
     }
     const response = await fetch('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com');
     if (!response.ok) throw new Error('Failed to fetch Google public keys (JWK)');
     const jwks = await response.json();
-    googlePublicKeys = jwks.keys;
+    googlePublicKeys = jwks.keys; // `keys`プロパティをキャッシュ
     keysFetchTime = now;
-    return googlePublicKeys;
+    return googlePublicKeys; // 鍵の配列を返す
 }
 
 function base64UrlDecode(str) {
@@ -50,8 +51,12 @@ async function verifyFirebaseToken(token, env) {
         if (payload.iss !== `https://securetoken.google.com/${firebaseProjectId}`) throw new Error('Invalid issuer.');
         if (!payload.sub || payload.sub === '') throw new Error('Invalid subject (uid).');
 
-        const jwks = await getGooglePublicKeys();
-        const jwk = jwks.keys.find(key => key.kid === header.kid);
+        // ★★★★★ バグ修正箇所 ★★★★★
+        // getGooglePublicKeysは既に鍵の配列を返すため、.keysは不要
+        const publicKeys = await getGooglePublicKeys();
+        const jwk = publicKeys.find(key => key.kid === header.kid);
+        // ★★★★★ ここまで ★★★★★
+
         if (!jwk) throw new Error('Public key not found for kid: ' + header.kid);
 
         const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
@@ -148,7 +153,7 @@ async function handleSynthesize({ request, env }) {
 async function purgeCache(context, urlsToPurge) {
     const cache = caches.default;
     for (const url of urlsToPurge) {
-        await cache.delete(url);
+        await cache.delete(new Request(url, context.request));
     }
 }
 
@@ -453,5 +458,8 @@ async function purgeRelatedCaches(context, userId, modelId) {
         `${baseUrl}/api/list?limit=50&page=1&userId=${userId}`,
         `${baseUrl}/api/list?limit=50&page=1&modelId=${encodeURIComponent(modelId)}`,
     ];
-    await purgeCache(context, urlsToPurge);
+    // purgeCacheヘルパーを呼び出す際に、第2引数にRequestオブジェクトを渡すように修正
+    for (const url of urlsToPurge) {
+        await context.caches.default.delete(new Request(url, context.request));
+    }
 }
