@@ -76,12 +76,14 @@
         .btn-delete:hover, .btn-delete-r2:hover { color: var(--danger-color); border-color: var(--danger-color); }
         .btn-view-user-files:hover { color: var(--info-color); border-color: var(--info-color); }
         
-        /* ★ NEW: Custom Audio Player Styles */
+        /* ★ MODIFIED: Custom Audio Player Styles with SVG support */
         .custom-audio-player { display: flex; align-items: center; gap: 10px; height: 32px; width: 100%; }
-        .play-pause-btn { background-color: var(--primary-color); color: white; border-radius: 50%; width: 28px; height: 28px; font-size: 14px; padding: 0; display: flex; justify-content: center; align-items: center; line-height: 1; flex-shrink: 0; transition: background-color 0.2s; }
+        .play-pause-btn { background-color: var(--primary-color); color: white; border-radius: 50%; width: 32px; height: 32px; padding: 0; display: flex; justify-content: center; align-items: center; flex-shrink: 0; transition: background-color 0.2s; border: none; }
         .play-pause-btn:hover { background-color: var(--primary-hover-color); }
         .play-pause-btn.playing { background-color: var(--secondary-color); }
         .play-pause-btn.playing:hover { background-color: var(--secondary-hover-color); }
+        .play-pause-btn svg { width: 14px; height: 14px; fill: currentColor; }
+        .play-icon { transform: translateX(1px); }
         .progress-wrapper { flex-grow: 1; height: 6px; background-color: #e0e0e0; border-radius: 3px; cursor: pointer; position: relative; }
         .progress-bar { height: 100%; width: 0%; background-color: var(--primary-color); border-radius: 3px; }
         .time-display { font-size: 0.8em; color: #666; min-width: 75px; text-align: right; user-select: none; }
@@ -296,6 +298,7 @@
     
     // ★ NEW: Helper function to format time
     function formatTime(seconds) {
+        if (isNaN(seconds) || seconds < 0) return "--:--";
         const minutes = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
         return `${minutes}:${secs.toString().padStart(2, '0')}`;
@@ -328,7 +331,6 @@
             let audioSrc, downloadHref;
             if (isTestPost) { try { const blob = base64toBlob(file.audio_base_64, file.content_type); const url = URL.createObjectURL(blob); audioSrc = url; downloadHref = url; } catch (e) { console.error("Error creating blob URL for test post:", e); audioSrc = ''; downloadHref = '#'; } } else { audioSrc = `/api/get/${encodeURIComponent(file.r2_key)}`; downloadHref = audioSrc; }
             
-            // <!-- ★ NEW/MODIFIED: HTML for Custom Audio Player -->
             card.innerHTML = `
                 <div class="card-main">
                     <div style="margin-bottom: 8px;">
@@ -338,7 +340,9 @@
                         <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p>
                     </div>
                     <div class="custom-audio-player">
-                        <button class="play-pause-btn">▶</button>
+                        <button class="play-pause-btn">
+                            <svg viewBox="0 0 24 24" class="play-icon"><path d="M8 5v14l11-7z"></path></svg>
+                        </button>
                         <div class="progress-wrapper"><div class="progress-bar"></div></div>
                         <span class="time-display">0:00 / --:--</span>
                         <audio preload="none" src="${audioSrc}" style="display: none;"></audio>
@@ -350,40 +354,33 @@
                 </div>`;
             r2GalleryContainer.appendChild(card);
 
-            // ★ NEW: Attach event listeners for the custom player
             const audio = card.querySelector('audio');
             const playBtn = card.querySelector('.play-pause-btn');
             const progressBar = card.querySelector('.progress-bar');
             const timeDisplay = card.querySelector('.time-display');
+            
+            const playIconSVG = '<svg viewBox="0 0 24 24" class="play-icon"><path d="M8 5v14l11-7z"></path></svg>';
+            const pauseIconSVG = '<svg viewBox="0 0 24 24" class="pause-icon"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path></svg>';
 
-            audio.addEventListener('loadedmetadata', () => {
-                timeDisplay.textContent = `${formatTime(0)} / ${formatTime(audio.duration)}`;
-            });
-            audio.addEventListener('timeupdate', () => {
-                const progressPercent = (audio.currentTime / audio.duration) * 100;
-                progressBar.style.width = `${progressPercent}%`;
-                timeDisplay.textContent = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`;
-            });
-            audio.addEventListener('play', () => { playBtn.textContent = '❚❚'; playBtn.classList.add('playing'); });
-            audio.addEventListener('pause', () => { playBtn.textContent = '▶'; playBtn.classList.remove('playing'); });
-            audio.addEventListener('ended', () => { playBtn.textContent = '▶'; playBtn.classList.remove('playing'); progressBar.style.width = '0%'; audio.currentTime = 0; });
+            audio.addEventListener('loadedmetadata', () => { timeDisplay.textContent = `${formatTime(0)} / ${formatTime(audio.duration)}`; });
+            audio.addEventListener('timeupdate', () => { const progressPercent = (audio.currentTime / audio.duration) * 100; progressBar.style.width = `${progressPercent}%`; timeDisplay.textContent = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`; });
+            audio.addEventListener('play', () => { playBtn.innerHTML = pauseIconSVG; playBtn.classList.add('playing'); });
+            audio.addEventListener('pause', () => { playBtn.innerHTML = playIconSVG; playBtn.classList.remove('playing'); });
+            audio.addEventListener('ended', () => { playBtn.innerHTML = playIconSVG; playBtn.classList.remove('playing'); progressBar.style.width = '0%'; audio.currentTime = 0; });
         });
     }
     function updateR2FilterStatusUI(username = null) { const r2FilterStatus = document.getElementById('r2-filter-status'); if (r2GalleryState.userId) { const displayName = username ? `「${username}」さん` : '特定ユーザー'; r2FilterStatus.innerHTML = `${displayName}の投稿を表示中 <button id="clear-user-filter-btn">フィルター解除</button>`; r2FilterStatus.style.display = 'block'; document.getElementById('clear-user-filter-btn').onclick = () => { r2GalleryState.userId = ''; loadR2Gallery(); }; } else { r2FilterStatus.style.display = 'none'; } }
     function updateR2PaginationUI() { const r2PaginationControls = document.getElementById('r2-pagination-controls'); const r2PageInfo = document.getElementById('r2-page-info'); const r2PrevPageBtn = document.getElementById('r2-prev-page-btn'); const r2NextPageBtn = document.getElementById('r2-next-page-btn'); r2PaginationControls.style.display = 'flex'; r2PageInfo.textContent = `ページ ${r2GalleryState.currentPage}`; r2PrevPageBtn.disabled = r2GalleryState.currentPage <= 1 || r2GalleryState.isLoading; r2NextPageBtn.disabled = !r2GalleryState.hasNextPage || r2GalleryState.isLoading; }
 
-    // ★★★ START: 新しいチャンクベースのデータ取得ロジック ★★★
     const API_BASE = '/api/chunk';
     let latestMetadata = null; let chunkCache = new Map();
     async function getLatestMetadata(forceRefresh = false) { if (latestMetadata && !forceRefresh) { return latestMetadata; } try { const response = await fetch(`${API_BASE}/latest`, { cache: 'no-store' }); if (!response.ok) throw new Error('Failed to fetch latest metadata'); const data = await response.json(); latestMetadata = data.metadata; chunkCache.set(latestMetadata.latestChunkNumber, data.audios); return latestMetadata; } catch (error) { console.error("Error fetching metadata:", error); latestMetadata = null; chunkCache.clear(); throw error; } }
     async function fetchAndBuildPage(pageNumber) { const metadata = await getLatestMetadata(); if (!metadata) { return []; } const { totalAudios, latestChunkNumber } = metadata; const startItemIndex = (pageNumber - 1) * R2_ITEMS_PER_PAGE; if (pageNumber > 1 && startItemIndex >= totalAudios) { return []; } const endItemIndex = startItemIndex + R2_ITEMS_PER_PAGE; const requiredChunks = new Set(); const startChunkIndex = Math.floor(startItemIndex / R2_ITEMS_PER_PAGE); const safeEndItemIndex = Math.min(endItemIndex, totalAudios); const endChunkIndex = Math.floor((safeEndItemIndex > 0 ? safeEndItemIndex - 1 : 0) / R2_ITEMS_PER_PAGE); for (let i = startChunkIndex; i <= endChunkIndex; i++) { const chunkNumber = latestChunkNumber - i; if (chunkNumber > 0) { requiredChunks.add(chunkNumber); } } const fetchPromises = []; requiredChunks.forEach(chunkNum => { if (chunkCache.has(chunkNum)) { fetchPromises.push(Promise.resolve(chunkCache.get(chunkNum))); } else if (chunkNum === latestChunkNumber) { fetchPromises.push(fetch(`${API_BASE}/latest`).then(res => res.json()).then(data => { chunkCache.set(chunkNum, data.audios); return data.audios; })); } else { fetchPromises.push(fetch(`${API_BASE}/${chunkNum}`).then(res => res.json()).then(data => { chunkCache.set(chunkNum, data); return data; })); } }); const chunkResults = await Promise.all(fetchPromises); return chunkResults.flat(); }
     async function loadR2Gallery() { const r2GalleryContainer = document.getElementById('r2-gallery-container'); if (r2GalleryState.isLoading) return; r2GalleryState.isLoading = true; r2GalleryContainer.innerHTML = '<p>読み込み中...</p>'; updateR2PaginationUI(); updateR2FilterStatusUI(); try { if(r2GalleryState.filter !== 'all' || r2GalleryState.modelId || r2GalleryState.searchText || r2GalleryState.userId) { const params = new URLSearchParams({ page: r2GalleryState.currentPage, limit: R2_ITEMS_PER_PAGE }); if (r2GalleryState.filter === 'mine') params.set('filter', 'mine'); if (r2GalleryState.modelId) params.set('modelId', r2GalleryState.modelId); if (r2GalleryState.searchText) params.set('searchText', r2GalleryState.searchText); if (r2GalleryState.userId) params.set('userId', r2GalleryState.userId); const response = await fetch(`/api/list?${params.toString()}`); if (!response.ok) throw new Error('Failed to fetch filtered list'); const files = await response.json(); r2GalleryState.hasNextPage = files.length === R2_ITEMS_PER_PAGE; renderR2Gallery(files); } else { const chunkData = await fetchAndBuildPage(r2GalleryState.currentPage); let filesToDisplay; if (r2GalleryState.currentPage === 1) { const allTestPosts = await getAllTestPosts(); const combined = [...chunkData, ...allTestPosts]; const unique = Array.from(new Map(combined.map(item => [item.r2_key, item])).values()); unique.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); filesToDisplay = unique.slice(0, R2_ITEMS_PER_PAGE); } else { const pageStart = (r2GalleryState.currentPage - 1) * R2_ITEMS_PER_PAGE; const pageEnd = pageStart + R2_ITEMS_PER_PAGE; filesToDisplay = chunkData.slice(pageStart % R2_ITEMS_PER_PAGE, (pageEnd % R2_ITEMS_PER_PAGE) || R2_ITEMS_PER_PAGE); } renderR2Gallery(filesToDisplay); const metadata = await getLatestMetadata(); if (metadata) { const totalPages = Math.ceil(metadata.totalAudios / R2_ITEMS_PER_PAGE); r2GalleryState.hasNextPage = r2GalleryState.currentPage < totalPages; } else { r2GalleryState.hasNextPage = false; } } } catch (error) { console.error('R2 gallery load error:', error); r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`; r2GalleryState.hasNextPage = false; } finally { r2GalleryState.isLoading = false; updateR2PaginationUI(); } }
-    // ★★★ END: 新しいチャンクベースのデータ取得ロジック ★★★
-
-    async function saveAudioAsTestPost(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('テスト投稿の対象データが不完全です。', true); return; } setStatus('テスト投稿を準備中...'); button.disabled = true; let userId, username; try { if (window.currentUser) { const response = await fetch('/api/my-profile'); if (!response.ok) { const err = await response.json().catch(() => ({error: 'サーバーからプロファイルを取得できませんでした。'})); throw new Error(err.error); } const myProfile = await response.json(); userId = myProfile.userId; username = myProfile.username; } else { userId = 'local-user'; username = '自分 (未ログイン)'; } const reader = new FileReader(); reader.readAsDataURL(blob); reader.onloadend = async () => { try { const base64Audio = reader.result.split(',')[1]; const newPost = { r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`, model_name: modelId, text_content: text, user_id: userId, username: username, audio_base_64: base64Audio, content_type: blob.type, is_test_post: true, created_at: new Date().toISOString() }; await addTestPost(newPost); await enforceLimit(); setStatus('音声をR2に保存しました。'); const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if (r2TabButton) r2TabButton.click(); } catch(dbError) { console.error('IndexedDBへの保存エラー:', dbError); setStatus(`テスト投稿の保存に失敗しました: ${dbError.message}`, true); } }; reader.onerror = () => { throw new Error("ファイルの読み込みに失敗しました。"); }; } catch (error) { console.error('Test post save error:', error); setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true); } finally { button.disabled = false; } }
-    async function saveAudioToR2(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('保存対象の音声データが不完全です。', true); return; } setStatus('R2に音声を保存中...'); button.disabled = true; try { const reader = new FileReader(); reader.readAsDataURL(blob); reader.onloadend = async () => { try { const base64Audio = reader.result.split(',')[1]; const response = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: modelId, text: text, audioBase64: base64Audio, contentType: blob.type }) }); if (!response.ok) { const errorData = await response.json().catch(() => ({ error: response.statusText, reason: null })); if (response.status === 403 && errorData.reason === 'muted') { await saveAudioAsTestPost(blob, modelId, text, button); /* ★ MODIFIED: メッセージは saveAudioAsTestPost 側で統一 */ return; } throw new Error(`R2への保存に失敗: ${errorData.error}`); } const result = await response.json(); setStatus('音声をR2に保存しました。'); const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) { r2TabButton.click(); } } catch (err) { console.error('R2 save error:', err); setStatus(err.message, true); } finally { if (button.disabled) { button.disabled = false; } } }; reader.onerror = (error) => { throw error; }; } catch (error) { console.error('File reading error:', error); setStatus('ファイルの読み込みに失敗しました。', true); button.disabled = false; } }
     
-    // --- Event Listener Setup (Auth and Storage) ---
+    async function saveAudioAsTestPost(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('テスト投稿の対象データが不完全です。', true); return; } setStatus('テスト投稿を準備中...'); button.disabled = true; let userId, username; try { if (window.currentUser) { const response = await fetch('/api/my-profile'); if (!response.ok) { const err = await response.json().catch(() => ({error: 'サーバーからプロファイルを取得できませんでした。'})); throw new Error(err.error); } const myProfile = await response.json(); userId = myProfile.userId; username = myProfile.username; } else { userId = 'local-user'; username = '自分 (未ログイン)'; } const reader = new FileReader(); reader.readAsDataURL(blob); reader.onloadend = async () => { try { const base64Audio = reader.result.split(',')[1]; const newPost = { r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`, model_name: modelId, text_content: text, user_id: userId, username: username, audio_base_64: base64Audio, content_type: blob.type, is_test_post: true, created_at: new Date().toISOString() }; await addTestPost(newPost); await enforceLimit(); setStatus('音声をR2に保存しました。'); const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if (r2TabButton) r2TabButton.click(); } catch(dbError) { console.error('IndexedDBへの保存エラー:', dbError); setStatus(`テスト投稿の保存に失敗しました: ${dbError.message}`, true); } }; reader.onerror = () => { throw new Error("ファイルの読み込みに失敗しました。"); }; } catch (error) { console.error('Test post save error:', error); setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true); } finally { button.disabled = false; } }
+    async function saveAudioToR2(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('保存対象の音声データが不完全です。', true); return; } setStatus('R2に音声を保存中...'); button.disabled = true; try { const reader = new FileReader(); reader.readAsDataURL(blob); reader.onloadend = async () => { try { const base64Audio = reader.result.split(',')[1]; const response = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: modelId, text: text, audioBase64: base64Audio, contentType: blob.type }) }); if (!response.ok) { const errorData = await response.json().catch(() => ({ error: response.statusText, reason: null })); if (response.status === 403 && errorData.reason === 'muted') { await saveAudioAsTestPost(blob, modelId, text, button); return; } throw new Error(`R2への保存に失敗: ${errorData.error}`); } const result = await response.json(); setStatus('音声をR2に保存しました。'); const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) { r2TabButton.click(); } } catch (err) { console.error('R2 save error:', err); setStatus(err.message, true); } finally { if (button.disabled) { button.disabled = false; } } }; reader.onerror = (error) => { throw error; }; } catch (error) { console.error('File reading error:', error); setStatus('ファイルの読み込みに失敗しました。', true); button.disabled = false; } }
+    
     function setupAuthEventListeners() { document.getElementById('login-btn').addEventListener('click', () => { const provider = new firebase.auth.GoogleAuthProvider(); auth.signInWithPopup(provider).catch(error => { if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') { console.log(`ログインがキャンセルされました: ${error.code}`); } else { console.error("Googleログインエラー:", error); alert(`ログインに失敗しました: ${error.message}`); } }); }); document.getElementById('logout-btn').addEventListener('click', () => auth.signOut()); }
     function setupStorageEventListeners() {
         document.getElementById('save-to-r2-btn').addEventListener('click', () => saveAudioToR2(currentCombinedAudioBlob, getCurrentModelId(), currentCombinedAudioInfo.text, document.getElementById('save-to-r2-btn')));
@@ -396,44 +393,22 @@
         document.getElementById('r2-prev-page-btn').addEventListener('click', () => { if (r2GalleryState.currentPage > 1) { r2GalleryState.currentPage--; loadR2Gallery(); } });
         document.getElementById('r2-next-page-btn').addEventListener('click', () => { if (r2GalleryState.hasNextPage) { r2GalleryState.currentPage++; loadR2Gallery(); } });
         
-        // ★ MODIFIED: Event listener for custom players, delete, and user file buttons
         document.getElementById('r2-gallery-container').addEventListener('click', async (e) => {
             const card = e.target.closest('.player-card');
             if (!card) return;
-
-            // Custom Player Logic
             const playBtn = e.target.closest('.play-pause-btn');
             const progressWrapper = e.target.closest('.progress-wrapper');
             if (playBtn || progressWrapper) {
                 const audio = card.querySelector('audio');
-                if (playBtn) {
-                    if (audio.paused) { audio.play(); } else { audio.pause(); }
-                }
-                if (progressWrapper && audio.duration) {
-                    const rect = progressWrapper.getBoundingClientRect();
-                    const clickX = e.clientX - rect.left;
-                    const width = rect.width;
-                    const duration = audio.duration;
-                    audio.currentTime = (clickX / width) * duration;
-                }
-                return; // Prevent other actions
-            }
-
-            // Delete Button Logic
-            const deleteButton = e.target.closest('.btn-delete-r2');
-            if (deleteButton) {
-                const fileKey = card.dataset.fileKey;
-                const isTestPost = deleteButton.dataset.isTestPost === 'true';
-                if (isTestPost) { if (confirm(`このテスト投稿をブラウザから削除しますか？`)) { try { const audioEl = card.querySelector('audio'); if (audioEl && audioEl.src.startsWith('blob:')) { URL.revokeObjectURL(audioEl.src); } await deleteTestPost(fileKey); card.remove(); } catch(dbError) { alert(`削除に失敗しました: ${dbError.message}`); } } }
-                else { const downloadLink = card.querySelector('.download-link'); const filename = downloadLink ? downloadLink.download : fileKey; if (confirm(`ファイル「${filename}」を完全に削除しますか？この操作は元に戻せません。`)) { try { deleteButton.disabled = true; const response = await fetch(`/api/delete/${encodeURIComponent(fileKey)}`, { method: 'DELETE' }); if (!response.ok) throw new Error((await response.json()).error || '削除に失敗しました'); loadR2Gallery(); } catch(error) { alert(error.message); deleteButton.disabled = false; } } }
+                if (audio.readyState === 0) { audio.load(); }
+                if (playBtn) { if (audio.paused) { audio.play(); } else { audio.pause(); } }
+                if (progressWrapper && audio.duration) { const rect = progressWrapper.getBoundingClientRect(); const clickX = e.clientX - rect.left; const width = rect.width; const duration = audio.duration; audio.currentTime = (clickX / width) * duration; }
                 return;
             }
-            
-            // View User Files Logic
+            const deleteButton = e.target.closest('.btn-delete-r2');
+            if (deleteButton) { const fileKey = card.dataset.fileKey; const isTestPost = deleteButton.dataset.isTestPost === 'true'; if (isTestPost) { if (confirm(`このテスト投稿をブラウザから削除しますか？`)) { try { const audioEl = card.querySelector('audio'); if (audioEl && audioEl.src.startsWith('blob:')) { URL.revokeObjectURL(audioEl.src); } await deleteTestPost(fileKey); card.remove(); } catch(dbError) { alert(`削除に失敗しました: ${dbError.message}`); } } } else { const downloadLink = card.querySelector('.download-link'); const filename = downloadLink ? downloadLink.download : fileKey; if (confirm(`ファイル「${filename}」を完全に削除しますか？この操作は元に戻せません。`)) { try { deleteButton.disabled = true; const response = await fetch(`/api/delete/${encodeURIComponent(fileKey)}`, { method: 'DELETE' }); if (!response.ok) throw new Error((await response.json()).error || '削除に失敗しました'); loadR2Gallery(); } catch(error) { alert(error.message); deleteButton.disabled = false; } } } return; }
             const viewUserBtn = e.target.closest('.btn-view-user-files');
-            if (viewUserBtn) {
-                r2GalleryState.userId = card.dataset.userId; r2GalleryState.currentPage = 1; r2GalleryState.filter = ''; r2GalleryState.modelId = ''; r2GalleryState.searchText = ''; document.getElementById('r2-filter-mine-toggle').checked = false; document.getElementById('r2-search-model-select').value = ''; document.getElementById('r2-search-text-input').value = ''; loadR2Gallery();
-            }
+            if (viewUserBtn) { r2GalleryState.userId = card.dataset.userId; r2GalleryState.currentPage = 1; r2GalleryState.filter = ''; r2GalleryState.modelId = ''; r2GalleryState.searchText = ''; document.getElementById('r2-filter-mine-toggle').checked = false; document.getElementById('r2-search-model-select').value = ''; document.getElementById('r2-search-text-input').value = ''; loadR2Gallery(); }
         });
     }
 
