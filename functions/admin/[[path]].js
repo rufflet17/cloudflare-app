@@ -1,8 +1,21 @@
 // functions/admin/[[path]].js
 
 async function verifyAdminToken(token, env) {
-    // 本番環境では、Firebase Admin SDKで発行したカスタムトークンを厳格に検証するロ-ジックが必須です。
-    return token ? { admin: true } : null;
+    // この関数は環境に合わせて、Firebase Admin SDKなどを使用した厳格な検証ロジックに置き換えてください。
+    // この例では簡略化しています。
+    try {
+        // Firebase Admin SDK を使用する場合の例
+        // const admin = require('firebase-admin');
+        // if (admin.apps.length === 0) {
+        //   admin.initializeApp({ credential: admin.credential.cert(JSON.parse(env.FIREBASE_SERVICE_ACCOUNT)) });
+        // }
+        // const decodedToken = await admin.auth().verifyIdToken(token); // Firebase ID Tokenの場合
+        // return decodedToken.admin ? decodedToken : null;
+        return token ? { admin: true } : null; // 開発用の簡易検証
+    } catch(e) {
+        console.error("Token verification failed:", e);
+        return null;
+    }
 }
 
 export async function onRequest(context) {
@@ -21,6 +34,15 @@ export async function onRequest(context) {
     }
 
     const path = url.pathname.replace('/admin', '');
+
+    // --- 新しいエンドポイント ---
+    if (path === '/api/users/muted-list' && method === 'GET') {
+        return handleGetStatusUsers(env, 'muted');
+    }
+    if (path === '/api/users/blocked-list' && method === 'GET') {
+        return handleGetStatusUsers(env, 'blocked');
+    }
+    // -------------------------
 
     if (path === '/api/posts/since' && method === 'GET') {
         return handleGetPostsSince(env, url.searchParams);
@@ -52,7 +74,41 @@ export async function onRequest(context) {
     return new Response(JSON.stringify({ error: "Admin API Route Not Found" }), { status: 404, headers: { 'Content-Type': 'application/json' }});
 }
 
-// --- API実装 ---
+
+// --- 新しいハンドラ ---
+async function handleGetStatusUsers(env, type) {
+    try {
+        let whereClause;
+        if (type === 'muted') {
+            whereClause = 'WHERE us.is_muted = 1';
+        } else if (type === 'blocked') {
+            whereClause = 'WHERE us.is_blocked = 1';
+        } else {
+            return new Response(JSON.stringify({ error: 'Invalid type' }), { status: 400 });
+        }
+
+        const query = `
+            SELECT 
+                us.user_id,
+                us.is_muted,
+                us.is_blocked,
+                p.username
+            FROM user_status AS us
+            LEFT JOIN user_profiles AS p ON us.user_id = p.user_id
+            ${whereClause}
+            ORDER BY p.username ASC
+        `;
+        const { results } = await env.MY_D1_DATABASE.prepare(query).all();
+        return new Response(JSON.stringify({ users: results }), { headers: { 'Content-Type': 'application/json' } });
+    } catch(e) {
+        console.error(`Error in handleGetStatusUsers (${type}):`, e);
+        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+    }
+}
+// ----------------------
+
+
+// --- 既存のAPI実装 (変更なし) ---
 
 async function handleGetPostsSince(env, params) {
     const limit = parseInt(params.get('limit'), 10) || 1000;
@@ -158,12 +214,16 @@ async function handleDeleteAllPosts(env, userId) {
         if (results && results.length > 0) {
             const keysToDelete = results.map(row => row.r2_key).filter(Boolean);
             if (keysToDelete.length > 0) {
-                await env.MY_R2_BUCKET.delete(keysToDelete);
+                // R2のdeleteは最大1000キーまでなので、必要に応じてチャンクに分割する
+                const chunkSize = 1000;
+                for (let i = 0; i < keysToDelete.length; i += chunkSize) {
+                    const chunk = keysToDelete.slice(i, i + chunkSize);
+                    await env.MY_R2_BUCKET.delete(chunk);
+                }
             }
-            await env.MY_D1_DATABASE.prepare(`DELETE FROM audios WHERE user_id = ?`).bind(userId).run();
-            return new Response(JSON.stringify({ success: true, deleted_count: keysToDelete.length }), { headers: { 'Content-Type': 'application/json' }});
         }
-        return new Response(JSON.stringify({ message: "No posts to delete." }), { headers: { 'Content-Type': 'application/json' }});
+        const { count } = await env.MY_D1_DATABASE.prepare(`DELETE FROM audios WHERE user_id = ?`).bind(userId).run();
+        return new Response(JSON.stringify({ success: true, deleted_count: count }), { headers: { 'Content-Type': 'application/json' }});
     } catch (e) {
         console.error("Error in handleDeleteAllPosts:", e);
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
