@@ -295,8 +295,7 @@
     // --- グローバル定数、DOM要素、状態管理変数 ---
     const SHOW_ADVANCED_FORMATS = true;
     const FORMAT_MAPPING = { mp3: { contentType: 'audio/mpeg', extension: 'mp3' }, wav: { contentType: 'audio/wav', extension: 'wav' }, flac: { contentType: 'audio/flac', extension: 'flac' }, opus: { contentType: 'audio/ogg', extension: 'opus' } };
-    const STORAGE_KEY = 'ttsAppStorage_v14';
-
+    
     const modelSelectTTS = document.getElementById('model-select-tts'), modelSelectBG = document.getElementById('model-select-bg'), formatSelect = document.getElementById('format-select');
     const generateBtn = document.getElementById('generate-btn'), generatePreviewBtn = document.getElementById('generate-preview-btn');
     const textInput = document.getElementById('text'), styleIdInput = document.getElementById('style-id-input');
@@ -354,8 +353,9 @@
     
     // --- IndexedDB 定数 ---
     const DB_NAME = 'TestPostsDB';
-    const DB_VERSION = 1;
+    const DB_VERSION = 2; // バージョンを更新
     const STORE_NAME = 'test_posts';
+    const SETTINGS_STORE_NAME = 'settings'; // 設定用ストア名を追加
     let db;
 
     // =========================================================================
@@ -374,6 +374,9 @@
                 if (!db.objectStoreNames.contains(STORE_NAME)) {
                     const store = db.createObjectStore(STORE_NAME, { keyPath: 'r2_key' });
                     store.createIndex('created_at', 'created_at', { unique: false });
+                }
+                if (!db.objectStoreNames.contains(SETTINGS_STORE_NAME)) {
+                    db.createObjectStore(SETTINGS_STORE_NAME, { keyPath: 'key' });
                 }
             };
         });
@@ -437,11 +440,72 @@
         };
     }
 
+    function getAllSettings() {
+        return new Promise((resolve, reject) => {
+            if (!db) return reject("DBが初期化されていません。");
+            const transaction = db.transaction([SETTINGS_STORE_NAME], 'readonly');
+            const store = transaction.objectStore(SETTINGS_STORE_NAME);
+            const request = store.getAll();
+            request.onsuccess = (event) => {
+                const settingsArray = event.target.result;
+                const settingsObject = {};
+                settingsArray.forEach(item => {
+                    settingsObject[item.key] = item.value;
+                });
+                resolve(settingsObject);
+            };
+            request.onerror = (event) => reject("設定の取得に失敗しました: " + event.target.error);
+        });
+    }
+
+    function saveAllSettings(state) {
+        return new Promise((resolve, reject) => {
+            if (!db) return reject("DBが初期化されていません。");
+            const transaction = db.transaction([SETTINGS_STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(SETTINGS_STORE_NAME);
+            const keys = Object.keys(state);
+            if (keys.length === 0) {
+                resolve();
+                return;
+            }
+            keys.forEach(key => {
+                store.put({ key: key, value: state[key] });
+            });
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = (event) => reject("トランザクションエラー: " + event.target.error);
+        });
+    }
+
+    function clearSettingsStore() {
+        return new Promise((resolve, reject) => {
+            if (!db) return reject("DBが初期化されていません。");
+            const transaction = db.transaction([SETTINGS_STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(SETTINGS_STORE_NAME);
+            const request = store.clear();
+            request.onsuccess = () => resolve();
+            request.onerror = (event) => reject("設定ストアのクリアに失敗しました: " + event.target.error);
+        });
+    }
+
     // =========================================================================
     // --- 1. アプリケーションの基本機能 (UI, データ管理) ---
     // =========================================================================
-    const loadState = () => { const savedState = localStorage.getItem(STORAGE_KEY); appState = savedState ? JSON.parse(savedState) : {}; appState.uiSettings = { ...defaultUiSettings, ...(appState.uiSettings || {}) }; };
-    const saveState = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+    const loadState = async () => {
+        try {
+            const savedState = await getAllSettings();
+            appState = savedState || {};
+        } catch (error) {
+            console.error("IndexedDBからの設定読み込みに失敗:", error);
+            appState = {};
+        }
+        appState.uiSettings = { ...defaultUiSettings, ...(appState.uiSettings || {}) };
+    };
+    const saveState = () => {
+        return saveAllSettings(appState).catch(error => {
+            console.error("IndexedDBへの設定保存に失敗:", error);
+            setStatus("設定の保存に失敗しました。", true);
+        });
+    };
     const getModelData = (modelId) => { if (!appState[modelId]) { const modelName = originalModels.find(m => m.id === modelId)?.name || modelId; appState[modelId] = { displayName: modelName, images: [], activeImageId: null }; } return appState[modelId]; };
     const getActiveImage = (modelId) => modelId ? getModelData(modelId).images.find(img => img.id === getModelData(modelId).activeImageId) : null;
     const getCurrentModelId = () => modelSelectTTS.value;
@@ -629,7 +693,7 @@
                 }
             }
             appState = importedState;
-            saveState();
+            await saveState();
             alert('インポートが完了しました。ページをリロードします。');
             location.reload();
         } catch (error) {
@@ -1251,13 +1315,24 @@
             appState.uiSettings.posX = containerWrapper.offsetLeft; appState.uiSettings.posY = containerWrapper.offsetTop;
             saveState();
         });
-        resetAllBgsBtn.addEventListener('click', () => {
+        resetAllBgsBtn.addEventListener('click', async () => {
             const confirmationText = "背景リセット";
             const userInput = prompt(`この操作は元に戻せません。\n全てのモデルの表示名と背景画像が削除されます。\n\nリセットを実行するには「${confirmationText}」と入力してください。`);
             if (userInput === confirmationText) {
-                Object.keys(appState).forEach(key => { if (key !== 'uiSettings') { delete appState[key]; } });
-                saveState(); alert('すべての背景設定がリセットされました。ページをリロードします。'); location.reload();
-            } else if (userInput !== null) { alert('入力が一致しませんでした。リセットはキャンセルされました。'); }
+                try {
+                    const uiSettingsToKeep = { ...appState.uiSettings };
+                    await clearSettingsStore();
+                    appState = { uiSettings: uiSettingsToKeep };
+                    await saveAllSettings(appState);
+                    alert('すべての背景設定がリセットされました。ページをリロードします。');
+                    location.reload();
+                } catch (error) {
+                    console.error("リセットエラー:", error);
+                    alert("リセット処理中にエラーが発生しました。");
+                }
+            } else if (userInput !== null) {
+                alert('入力が一致しませんでした。リセットはキャンセルされました。');
+            }
         });
         [modelSelectTTS, modelSelectBG].forEach(sel => sel.addEventListener('change', (e) => {
             const newModelId = e.target.value; modelSelectTTS.value = newModelId; modelSelectBG.value = newModelId;
@@ -1588,7 +1663,7 @@
             // Step 1: 基本設定の初期化
             await initDB();
             setupAuth();
-            loadState();
+            await loadState();
             applyUiSettings();
             updateFormatSelectVisibility();
 
