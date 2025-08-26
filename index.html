@@ -72,7 +72,7 @@
         .player-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; background-color: #f9f9f9; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
         .player-card.is-error { background-color: #f8d7da; border-color: #f5c6cb; }
         .card-main { flex-grow: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-        .card-main audio { width: 100%; max-height: 40px; }
+        .card-main audio { width: 100%; max-height: 40px; accent-color: var(--primary-color); } /* ★ MODIFIED: accent-color を追加 */
         .error-message { font-weight: bold; color: #721c24; }
         .card-actions-wrapper { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; flex-shrink: 0; }
         .player-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -433,7 +433,6 @@
         updateR2FilterStatusUI();
         
         try {
-            // フィルターが有効な場合は、従来のAPIでデータを取得
             if(r2GalleryState.filter !== 'all' || r2GalleryState.modelId || r2GalleryState.searchText || r2GalleryState.userId) {
                 console.log("Filters active, using legacy /api/list endpoint.");
                 const params = new URLSearchParams({ page: r2GalleryState.currentPage, limit: R2_ITEMS_PER_PAGE });
@@ -448,24 +447,18 @@
                 r2GalleryState.hasNextPage = files.length === R2_ITEMS_PER_PAGE;
                 renderR2Gallery(files);
             } else {
-                // フィルターがない場合は、新しいチャンクベースのロジックを使用
                 const chunkData = await fetchAndBuildPage(r2GalleryState.currentPage);
                 let filesToDisplay;
 
-                // 1ページ目の場合のみ、IndexedDBのデータをマージして最新50件を選択
                 if (r2GalleryState.currentPage === 1) {
                     const allTestPosts = await getAllTestPosts();
                     const combined = [...chunkData, ...allTestPosts];
-                    // 重複を排除し、日付で降順ソート
                     const unique = Array.from(new Map(combined.map(item => [item.r2_key, item])).values());
                     unique.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-                    // 最終的に表示する50件をスライス
                     filesToDisplay = unique.slice(0, R2_ITEMS_PER_PAGE);
                 } else {
-                    // 2ページ目以降は、サーバーからのデータ（IndexedDBを含まない）をそのまま表示
                     const pageStart = (r2GalleryState.currentPage - 1) * R2_ITEMS_PER_PAGE;
                     const pageEnd = pageStart + R2_ITEMS_PER_PAGE;
-                    // chunkDataには複数ページ分が含まれる可能性があるので、該当ページ分をスライスする
                     filesToDisplay = chunkData.slice(pageStart % R2_ITEMS_PER_PAGE, (pageEnd % R2_ITEMS_PER_PAGE) || R2_ITEMS_PER_PAGE);
                 }
                 
@@ -490,7 +483,7 @@
     }
     // ★★★ END: 新しいチャンクベースのデータ取得ロジック (MODIFIED) ★★★
 
-    async function saveAudioAsTestPost(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('テスト投稿の対象データが不完全です。', true); return; } setStatus('テスト投稿を準備中...'); button.disabled = true; let userId, username; try { if (window.currentUser) { const response = await fetch('/api/my-profile'); if (!response.ok) { const err = await response.json().catch(() => ({error: 'サーバーからプロファイルを取得できませんでした。'})); throw new Error(err.error); } const myProfile = await response.json(); userId = myProfile.userId; username = myProfile.username; } else { userId = 'local-user'; username = '自分 (未ログイン)'; } const reader = new FileReader(); reader.readAsDataURL(blob); reader.onloadend = async () => { try { const base64Audio = reader.result.split(',')[1]; const newPost = { r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`, model_name: modelId, text_content: text, user_id: userId, username: username, audio_base_64: base64Audio, content_type: blob.type, is_test_post: true, created_at: new Date().toISOString() }; await addTestPost(newPost); await enforceLimit(); setStatus('テスト投稿をブラウザに保存しました。'); const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if (r2TabButton) r2TabButton.click(); } catch(dbError) { console.error('IndexedDBへの保存エラー:', dbError); setStatus(`テスト投稿の保存に失敗しました: ${dbError.message}`, true); } }; reader.onerror = () => { throw new Error("ファイルの読み込みに失敗しました。"); }; } catch (error) { console.error('Test post save error:', error); setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true); } finally { button.disabled = false; } }
+    async function saveAudioAsTestPost(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('テスト投稿の対象データが不完全です。', true); return; } setStatus('テスト投稿を準備中...'); button.disabled = true; let userId, username; try { if (window.currentUser) { const response = await fetch('/api/my-profile'); if (!response.ok) { const err = await response.json().catch(() => ({error: 'サーバーからプロファイルを取得できませんでした。'})); throw new Error(err.error); } const myProfile = await response.json(); userId = myProfile.userId; username = myProfile.username; } else { userId = 'local-user'; username = '自分 (未ログイン)'; } const reader = new FileReader(); reader.readAsDataURL(blob); reader.onloadend = async () => { try { const base64Audio = reader.result.split(',')[1]; const newPost = { r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`, model_name: modelId, text_content: text, user_id: userId, username: username, audio_base_64: base64Audio, content_type: blob.type, is_test_post: true, created_at: new Date().toISOString() }; await addTestPost(newPost); await enforceLimit(); setStatus('音声をR2に保存しました。'); /* ★ MODIFIED: メッセージを統一 */ const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if (r2TabButton) r2TabButton.click(); } catch(dbError) { console.error('IndexedDBへの保存エラー:', dbError); setStatus(`テスト投稿の保存に失敗しました: ${dbError.message}`, true); } }; reader.onerror = () => { throw new Error("ファイルの読み込みに失敗しました。"); }; } catch (error) { console.error('Test post save error:', error); setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true); } finally { button.disabled = false; } }
     async function saveAudioToR2(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('保存対象の音声データが不完全です。', true); return; } setStatus('R2に音声を保存中...'); button.disabled = true; try { const reader = new FileReader(); reader.readAsDataURL(blob); reader.onloadend = async () => { try { const base64Audio = reader.result.split(',')[1]; const response = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: modelId, text: text, audioBase64: base64Audio, contentType: blob.type }) }); if (!response.ok) { const errorData = await response.json().catch(() => ({ error: response.statusText, reason: null })); if (response.status === 403 && errorData.reason === 'muted') { setStatus(errorData.error); await saveAudioAsTestPost(blob, modelId, text, button); return; } throw new Error(`R2への保存に失敗: ${errorData.error}`); } const result = await response.json(); setStatus('音声をR2に保存しました。'); const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) { r2TabButton.click(); } } catch (err) { console.error('R2 save error:', err); setStatus(err.message, true); } finally { if (button.disabled) { button.disabled = false; } } }; reader.onerror = (error) => { throw error; }; } catch (error) { console.error('File reading error:', error); setStatus('ファイルの読み込みに失敗しました。', true); button.disabled = false; } }
     
     // --- Event Listener Setup (Auth and Storage) ---
