@@ -1,8 +1,51 @@
 // functions/_middleware.js
 
+// --- D1 Schema (推奨) ---
+/*
+-- D1コンソールなどで以下のコマンドを実行してテーブルとインデックスを作成してください。
+
+-- audios: 音声メタデータを保存
+CREATE TABLE IF NOT EXISTS audios (
+    id TEXT PRIMARY KEY,
+    r2_key TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    text_content TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    deleted_at TEXT
+);
+-- is_deleted フラグと created_at でソート・フィルタリングすることが多いため、複合インデックスを作成
+CREATE INDEX IF NOT EXISTS idx_audios_list_all ON audios (is_deleted, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audios_list_user ON audios (user_id, is_deleted, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audios_list_model ON audios (model_name, is_deleted, created_at DESC);
+
+-- user_profiles: ユーザーの表示名
+CREATE TABLE IF NOT EXISTS user_profiles (
+    user_id TEXT PRIMARY KEY,
+    username TEXT NOT NULL
+);
+
+-- user_status: ユーザーの投稿制限状態
+CREATE TABLE IF NOT EXISTS user_status (
+    user_id TEXT PRIMARY KEY,
+    is_blocked INTEGER NOT NULL DEFAULT 0,
+    is_muted INTEGER NOT NULL DEFAULT 0
+);
+
+-- audio_metadata: チャンク化のためのメタデータ（アイテム総数）
+CREATE TABLE IF NOT EXISTS audio_metadata (
+    id TEXT PRIMARY KEY, -- 'all', 'user_xxxx', 'model_yyyy' など
+    total_items INTEGER NOT NULL DEFAULT 0,
+    last_updated TEXT NOT NULL
+);
+*/
+
 // --- 定数 ---
 const ITEMS_PER_CHUNK = 50;
-const CDN_CACHE_DURATION_SECONDS = 60 * 60 * 24 * 7; // 7日間
+const CDN_LIST_CACHE_SECONDS = 60 * 60 * 24 * 7; // 7日間
+const CDN_CHUNK_CACHE_SECONDS = 60 * 60 * 24 * 365; // 1年間
+const CDN_R2_OBJECT_CACHE_SECONDS = 60 * 60 * 24 * 365; // 1年間
 
 // --- JWT検証用のヘルパー関数 ---
 let googlePublicKeys = null;
@@ -50,7 +93,7 @@ async function verifyFirebaseToken(token, env) {
         if (payload.aud !== firebaseProjectId) throw new Error('Invalid audience.');
         if (payload.iss !== `https://securetoken.google.com/${firebaseProjectId}`) throw new Error('Invalid issuer.');
         if (!payload.sub || payload.sub === '') throw new Error('Invalid subject (uid).');
-
+        
         const publicKeys = await getGooglePublicKeys();
         const jwk = publicKeys.find(key => key.kid === header.kid);
 
@@ -179,7 +222,7 @@ async function handleApiRoutes(context) {
     if (path === '/api/list' && method === 'GET') return handleList(context, decodedToken);
     if (path.startsWith('/api/get/') && method === 'GET') {
         const key = decodeURIComponent(url.pathname.substring('/api/get/'.length));
-        return handleGet(request, env, key);
+        return handleGet(context, key);
     }
     if (path === '/api/profile') return handleProfile(request, env, decodedToken);
     if (path === '/api/my-profile' && method === 'GET') return handleMyProfile(request, env, decodedToken);
@@ -224,78 +267,87 @@ async function handleUpload(context, decodedToken) {
     }
 }
 
-function getMetadataKey(params, decodedToken) {
-    if (params.get('userId')) return `user_${params.get('userId')}`;
-    if (params.get('filter') === 'mine' && decodedToken) return `user_${decodedToken.sub}`;
-    if (params.get('modelId')) return `model_${params.get('modelId')}`;
-    return 'all';
-}
-
 async function handleList(context, decodedToken) {
     const { request, env } = context;
+    const cache = caches.default;
+
+    // テキスト検索を含むリクエストはキャッシュしない
     const url = new URL(request.url);
-    
-    // 検索テキストが含まれる場合はキャッシュしない
-    if (url.searchParams.has('searchText')) {
-        // キャッシュを使わない場合のロジックをここに実装
-        return await fetchFromD1WithoutCache(context, decodedToken);
+    const searchText = url.searchParams.get('searchText');
+    if (!searchText) {
+        const cacheResponse = await cache.match(request);
+        if (cacheResponse) return cacheResponse;
     }
     
-    const cache = caches.default;
-    const cacheResponse = await cache.match(request);
-    if (cacheResponse) return cacheResponse;
-
     try {
         const params = url.searchParams;
         const page = parseInt(params.get('page') || '1', 10);
-        const limit = parseInt(params.get('limit') || '50', 10);
+        const limit = ITEMS_PER_CHUNK; // 常に50件単位で取得
+        const offset = (page - 1) * limit;
 
-        if (isNaN(page) || page < 1 || isNaN(limit) || limit < 1 || limit > ITEMS_PER_CHUNK) {
-            return new Response(JSON.stringify({ error: "無効なページまたはリミットです。" }), { status: 400 });
+        let conditions = ["a.is_deleted = 0"];
+        let bindings = [];
+        const metadataKey = getMetadataKey(params, decodedToken);
+
+        if (params.get('userId')) { conditions.push("a.user_id = ?"); bindings.push(params.get('userId')); }
+        else if (params.get('filter') === 'mine' && decodedToken) { conditions.push("a.user_id = ?"); bindings.push(decodedToken.sub); }
+        if (params.get('modelId')) { conditions.push("a.model_name = ?"); bindings.push(params.get('modelId')); }
+        if (searchText) { conditions.push("a.text_content LIKE ?"); bindings.push(`%${searchText}%`); }
+
+        // テキスト検索の場合は、チャンク化を無視してD1を直接検索
+        if (searchText) {
+            const query = `SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id WHERE ${conditions.join(' AND ')} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
+            bindings.push(limit, offset);
+            const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
+            return new Response(JSON.stringify(results || []), { headers: { "Content-Type": "application/json" } });
         }
 
-        const metadataKey = getMetadataKey(params, decodedToken);
+        // 通常のリスト取得（チャンク化利用）
         const metadata = await env.MY_D1_DATABASE.prepare("SELECT total_items FROM audio_metadata WHERE id = ?").bind(metadataKey).first();
         const totalItems = metadata ? metadata.total_items : 0;
         
         let results = [];
-        if (totalItems > 0) {
-            const offset = (page - 1) * limit;
+        if (totalItems > offset) {
+            const itemsToFetch = Math.min(limit, totalItems - offset);
             const recentItemsCount = totalItems % ITEMS_PER_CHUNK;
-            const totalChunks = Math.floor(totalItems / ITEMS_PER_CHUNK);
             
-            if (offset < recentItemsCount) { 
-                // --- 最新の未チャンク化データから取得 ---
-                let conditions = ["a.is_deleted = 0"];
-                let bindings = [];
-                const [type, value] = metadataKey.split('_');
-                if (type === 'user') { conditions.push("a.user_id = ?"); bindings.push(value); }
-                if (type === 'model') { conditions.push("a.model_name = ?"); bindings.push(value); }
-
+            // 最新の未チャンク化データから取得
+            if (offset < recentItemsCount) {
                 const query = `SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id WHERE ${conditions.join(' AND ')} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
-                bindings.push(limit, offset);
-                
-                const { results: dbResults } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
-                results = dbResults;
+                const d1Limit = Math.min(itemsToFetch, recentItemsCount - offset);
+                const d1Bindings = [...bindings, d1Limit, offset];
+                const { results: dbResults } = await env.MY_D1_DATABASE.prepare(query).bind(...d1Bindings).all();
+                results = results.concat(dbResults);
+            }
 
-            } else { 
-                // --- チャンク化済みデータから取得 ---
-                const chunkOffset = offset - recentItemsCount;
-                const chunkIndex = totalChunks - 1 - Math.floor(chunkOffset / ITEMS_PER_CHUNK);
-                
-                if (chunkIndex >= 0) {
-                    const chunkKey = `chunks/${metadataKey}/chunk_${chunkIndex}.json`;
-                    const chunkObject = await env.MY_R2_BUCKET.get(chunkKey);
-                    if (chunkObject) {
-                        const chunkData = await chunkObject.json();
-                        const offsetInChunk = chunkOffset % ITEMS_PER_CHUNK;
-                        results = chunkData.slice(offsetInChunk, offsetInChunk + limit);
-                    }
-                }
+            // チャンク化済みデータから取得
+            if (results.length < itemsToFetch) {
+                 const chunkOffset = offset > recentItemsCount ? offset - recentItemsCount : 0;
+                 const chunkItemsToFetch = itemsToFetch - results.length;
+                 const startChunkIndex = Math.floor(chunkOffset / ITEMS_PER_CHUNK);
+                 const totalChunks = Math.floor((totalItems - recentItemsCount) / ITEMS_PER_CHUNK);
+
+                 let itemsFetchedFromChunks = 0;
+                 for (let i = startChunkIndex; itemsFetchedFromChunks < chunkItemsToFetch; i++) {
+                     const chunkNumber = totalChunks - 1 - i;
+                     if (chunkNumber < 0) break;
+                     
+                     const chunkKey = `chunks/${metadataKey}/chunk_${chunkNumber}.json`;
+                     const chunkObject = await env.MY_R2_BUCKET.get(chunkKey);
+                     if (chunkObject) {
+                         const chunkData = await chunkObject.json();
+                         const offsetInChunk = (chunkOffset + itemsFetchedFromChunks) % ITEMS_PER_CHUNK;
+                         const itemsToTake = Math.min(chunkData.length - offsetInChunk, chunkItemsToFetch - itemsFetchedFromChunks);
+                         results = results.concat(chunkData.slice(offsetInChunk, offsetInChunk + itemsToTake));
+                         itemsFetchedFromChunks += itemsToTake;
+                     } else {
+                         break; // チャンクが見つからなければ終了
+                     }
+                 }
             }
         }
         
-        const response = new Response(JSON.stringify(results || []), { headers: { "Content-Type": "application/json", 'Cache-Control': `public, s-maxage=${CDN_CACHE_DURATION_SECONDS}` } });
+        const response = new Response(JSON.stringify(results || []), { headers: { "Content-Type": "application/json", 'Cache-Control': `public, s-maxage=${CDN_LIST_CACHE_SECONDS}` } });
         context.waitUntil(cache.put(request, response.clone()));
         return response;
 
@@ -305,35 +357,11 @@ async function handleList(context, decodedToken) {
     }
 }
 
-// 検索時など、キャッシュを利用しない場合のフォールバック関数
-async function fetchFromD1WithoutCache(context, decodedToken) {
-    const { request, env } = context;
-    const url = new URL(request.url);
-    const params = url.searchParams;
-    const page = parseInt(params.get('page') || '1', 10);
-    const limit = parseInt(params.get('limit') || '50', 10);
-    const offset = (page - 1) * limit;
-
-    let conditions = ["a.is_deleted = 0"];
-    let bindings = [];
-    if (params.get('userId')) { conditions.push("a.user_id = ?"); bindings.push(params.get('userId')); }
-    else if (params.get('filter') === 'mine' && decodedToken) { conditions.push("a.user_id = ?"); bindings.push(decodedToken.sub); }
-    if (params.get('modelId')) { conditions.push("a.model_name = ?"); bindings.push(params.get('modelId')); }
-    if (params.get('searchText')) { conditions.push("a.text_content LIKE ?"); bindings.push(`%${params.get('searchText')}%`); }
-
-    const query = `SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id WHERE ${conditions.join(' AND ')} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
-    bindings.push(limit, offset);
-    
-    const { results: dbResults } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
-    return new Response(JSON.stringify(dbResults || []), { headers: { "Content-Type": "application/json" } });
-}
-
-
-async function handleGet(request, env, key) {
+async function handleGet(context, key) {
+    const { env } = context;
     try {
-        // 論理削除されていないかD1でチェック
         const d1_entry = await env.MY_D1_DATABASE.prepare("SELECT id FROM audios WHERE r2_key = ? AND is_deleted = 0").bind(key).first();
-        if (!d1_entry) return new Response("Object Not Found or has been deleted", { status: 404 });
+        if (!d1_entry) return new Response("Object Not Found", { status: 404 });
 
         const object = await env.MY_R2_BUCKET.get(key);
         if (object === null) return new Response("Object Not Found in R2", { status: 404 });
@@ -341,8 +369,7 @@ async function handleGet(request, env, key) {
         const headers = new Headers();
         object.writeHttpMetadata(headers);
         headers.set("etag", object.httpEtag);
-        // R2オブジェクトは長期間キャッシュさせる
-        headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+        headers.set('Cache-Control', `public, max-age=${CDN_R2_OBJECT_CACHE_SECONDS}, immutable`);
         return new Response(object.body, { headers });
     } catch (error) {
         console.error("Get failed:", error);
@@ -361,9 +388,8 @@ async function handleLogicalDelete(context, decodedToken, key) {
             return new Response(JSON.stringify({ error: "File not found or access denied." }), { status: 404 });
         }
         
-        await env.MY_D1_DATABASE.prepare(`UPDATE audios SET is_deleted = 1, deleted_at = ? WHERE r2_key = ? AND user_id = ?`).bind(new Date().toISOString(), key, user.uid).run();
+        await env.MY_D1_DATABASE.prepare(`UPDATE audios SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP WHERE r2_key = ? AND user_id = ?`).bind(key, user.uid).run();
 
-        // メタデータ更新とキャッシュパージをバックグラウンドで実行
         context.waitUntil(decrementMetadataAndPurge(context, user.uid, audioInfo.model_name));
         
         return new Response(JSON.stringify({ success: true, key: key }), { status: 200 });
@@ -373,21 +399,13 @@ async function handleLogicalDelete(context, decodedToken, key) {
     }
 }
 
-// --- プロファイルハンドラー ---
 async function handleProfile(request, env, decodedToken) {
     const userId = decodedToken.sub;
-    if (request.method === 'GET') {
-        const profile = await env.MY_D1_DATABASE.prepare(`SELECT username FROM user_profiles WHERE user_id = ?`).bind(userId).first();
-        if (!profile) return new Response(JSON.stringify({ error: "Profile not found" }), { status: 404 });
-        return new Response(JSON.stringify(profile), { headers: { 'Content-Type': 'application/json' } });
-    }
     if (request.method === 'POST') {
         try {
             const { username } = await request.json();
             if (!username || username.trim().length === 0 || username.length > 20) return new Response(JSON.stringify({ error: "表示名は1文字以上20文字以内で入力してください。" }), { status: 400 });
             await env.MY_D1_DATABASE.prepare(`INSERT INTO user_profiles (user_id, username) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET username = excluded.username`).bind(userId, username.trim()).run();
-            // ユーザーごとのリストキャッシュをパージ
-            await purgeRelatedCaches(context, userId, null);
             return new Response(JSON.stringify({ success: true, username: username.trim() }), { status: 200 });
         } catch (e) {
             console.error("Profile update failed:", e);
@@ -410,7 +428,15 @@ async function handleMyProfile(request, env, decodedToken) {
     }
 }
 
-// --- チャンク化とメタデータ更新のコアロジック ---
+// --- メタデータとチャンク管理のヘルパー関数 ---
+
+function getMetadataKey(params, decodedToken) {
+    if (params.get('userId')) return `user_${params.get('userId')}`;
+    if (params.get('filter') === 'mine' && decodedToken) return `user_${decodedToken.sub}`;
+    if (params.get('modelId')) return `model_${params.get('modelId')}`;
+    return 'all';
+}
+
 async function updateMetadataAndChunks(context, userId, modelId) {
     const { env } = context;
     const metadataKeys = ['all', `user_${userId}`, `model_${modelId}`];
@@ -431,42 +457,39 @@ async function updateMetadataAndChunks(context, userId, modelId) {
 }
 
 async function decrementMetadataAndPurge(context, userId, modelId) {
-    const { env } = context;
     const metadataKeys = ['all', `user_${userId}`, `model_${modelId}`];
     for (const key of metadataKeys) {
-        await env.MY_D1_DATABASE.prepare(
-            `UPDATE audio_metadata SET total_items = MAX(0, total_items - 1), last_updated = ? WHERE id = ?`
+        await context.env.MY_D1_DATABASE.prepare(
+            `UPDATE audio_metadata SET total_items = CASE WHEN total_items > 0 THEN total_items - 1 ELSE 0 END, last_updated = ? WHERE id = ?`
         ).bind(new Date().toISOString(), key).run();
     }
-    // 削除時はチャンク再生成はせず、キャッシュパージのみ
     await purgeRelatedCaches(context, userId, modelId);
 }
 
 async function createChunk(env, metadataKey, totalItems) {
-    // チャンク化するアイテム数は常にITEMS_PER_CHUNK個
-    const offset = totalItems - ITEMS_PER_CHUNK;
-    if (offset < 0) return; // totalItemsが50未満の場合は何もしない
+    const chunkIndex = Math.floor(totalItems / ITEMS_PER_CHUNK) - 1;
+    if (chunkIndex < 0) return;
 
-    const chunkIndex = Math.floor(offset / ITEMS_PER_CHUNK);
-    
     let conditions = ["a.is_deleted = 0"];
     let bindings = [];
     const [type, value] = metadataKey.split('_');
     if (type === 'user') { conditions.push("a.user_id = ?"); bindings.push(value); }
     if (type === 'model') { conditions.push("a.model_name = ?"); bindings.push(value); }
+
+    const offset = totalItems - (chunkIndex + 1) * ITEMS_PER_CHUNK;
     
-    // 特定の50件を取得するためのクエリ
-    const query = `SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id WHERE ${conditions.join(' AND ')} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
+    const query = `SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id WHERE ${conditions.join(' AND ')} ORDER BY a.created_at ASC LIMIT ? OFFSET ?`;
     bindings.push(ITEMS_PER_CHUNK, offset);
     
     const { results } = await env.MY_D1_DATABASE.prepare(query).bind(...bindings).all();
+    const sortedResults = results.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    if (results && results.length > 0) {
+    if (sortedResults && sortedResults.length > 0) {
         const chunkR2Key = `chunks/${metadataKey}/chunk_${chunkIndex}.json`;
-        await env.MY_R2_BUCKET.put(chunkR2Key, JSON.stringify(results), {
+        await env.MY_R2_BUCKET.put(chunkR2Key, JSON.stringify(sortedResults), {
             httpMetadata: { 
                 contentType: 'application/json',
-                cacheControl: 'public, max-age=31536000, immutable' // 1年間キャッシュ
+                cacheControl: `public, max-age=${CDN_CHUNK_CACHE_SECONDS}, immutable`
             },
         });
     }
@@ -475,23 +498,15 @@ async function createChunk(env, metadataKey, totalItems) {
 async function purgeRelatedCaches(context, userId, modelId) {
     const cache = caches.default;
     const baseUrl = new URL(context.request.url).origin;
-    
-    // パージ対象のURLリストを生成
-    // ページ1のキャッシュを削除することで、最新の投稿が反映されるようにする
+    // 最新のチャンクに影響を与えるのは最初のページのみなので、page=1のキャッシュを削除
     const urlsToPurge = [
-        new URL(`${baseUrl}/api/list?filter=all&limit=${ITEMS_PER_CHUNK}&page=1`),
+        `${baseUrl}/api/list?page=1`, // 全件
+        `${baseUrl}/api/list?filter=mine&page=1`, // 自分の投稿
+        `${baseUrl}/api/list?userId=${userId}&page=1`, // ユーザーごとの投稿
+        `${baseUrl}/api/list?modelId=${encodeURIComponent(modelId)}&page=1`, // モデルごとの投稿
     ];
-    if (userId) {
-        urlsToPurge.push(new URL(`${baseUrl}/api/list?filter=all&limit=${ITEMS_PER_CHUNK}&page=1&userId=${userId}`));
-        urlsToPurge.push(new URL(`${baseUrl}/api/list?filter=mine&limit=${ITEMS_PER_CHUNK}&page=1`));
-    }
-    if (modelId) {
-        const encodedModelId = encodeURIComponent(modelId);
-        urlsToPurge.push(new URL(`${baseUrl}/api/list?filter=all&limit=${ITEMS_PER_CHUNK}&page=1&modelId=${encodedModelId}`));
-    }
     
-    // 各URLのキャッシュを削除
     for (const url of urlsToPurge) {
-        await cache.delete(new Request(url, { headers: context.request.headers }), { ignoreMethod: true });
+       await cache.delete(new Request(url));
     }
 }
