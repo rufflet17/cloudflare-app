@@ -62,19 +62,11 @@
         .status-info { background-color: #e7f3fe; color: #004085; }
         .status-error { background-color: #f8d7da; color: #721c24; }
         #results-container { margin-top: 20px; display: flex; flex-direction: column; gap: 15px; }
-        #r2-gallery-container {
-            margin-top: 10px; display: flex; flex-direction: column; gap: 15px;
-            max-height: 40vh;
-            overflow-y: auto;
-            padding-right: 10px;
-            min-height: 100px;
-        }
+        #r2-gallery-container { margin-top: 10px; display: flex; flex-direction: column; gap: 15px; max-height: 40vh; overflow-y: auto; padding-right: 10px; min-height: 100px; }
         .player-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; background-color: #f9f9f9; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
         .player-card.is-error { background-color: #f8d7da; border-color: #f5c6cb; }
         .card-main { flex-grow: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-        .card-main audio { width: 100%; max-height: 40px; accent-color: var(--primary-color); } /* ★ MODIFIED: accent-color を追加 */
         .error-message { font-weight: bold; color: #721c24; }
-        .card-actions-wrapper { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; flex-shrink: 0; }
         .player-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
         .icon-btn { background-color: transparent; border: 1px solid #ccc; border-radius: 50%; width: 36px; height: 36px; padding: 0; font-size: 1.3rem; cursor: pointer; color: #555; transition: background-color 0.2s, color 0.2s, border-color 0.2s; display: flex; justify-content: center; align-items: center; line-height: 1; }
         .icon-btn:not(:disabled):hover { background-color: #f0f0f0; color: var(--primary-color); border-color: var(--primary-color); }
@@ -83,6 +75,17 @@
         .download-link.icon-btn:hover { color: var(--success-color); border-color: var(--success-color); }
         .btn-delete:hover, .btn-delete-r2:hover { color: var(--danger-color); border-color: var(--danger-color); }
         .btn-view-user-files:hover { color: var(--info-color); border-color: var(--info-color); }
+        
+        /* ★ NEW: Custom Audio Player Styles */
+        .custom-audio-player { display: flex; align-items: center; gap: 10px; height: 32px; width: 100%; }
+        .play-pause-btn { background-color: var(--primary-color); color: white; border-radius: 50%; width: 28px; height: 28px; font-size: 14px; padding: 0; display: flex; justify-content: center; align-items: center; line-height: 1; flex-shrink: 0; transition: background-color 0.2s; }
+        .play-pause-btn:hover { background-color: var(--primary-hover-color); }
+        .play-pause-btn.playing { background-color: var(--secondary-color); }
+        .play-pause-btn.playing:hover { background-color: var(--secondary-hover-color); }
+        .progress-wrapper { flex-grow: 1; height: 6px; background-color: #e0e0e0; border-radius: 3px; cursor: pointer; position: relative; }
+        .progress-bar { height: 100%; width: 0%; background-color: var(--primary-color); border-radius: 3px; }
+        .time-display { font-size: 0.8em; color: #666; min-width: 75px; text-align: right; user-select: none; }
+
         .card-status { font-size: 0.9em; font-weight: bold; min-height: 1.2em; color: var(--primary-color); }
         .card-text-wrapper { display: flex; align-items: baseline; gap: 8px; }
         .card-index { font-weight: bold; color: #6c757d; }
@@ -125,13 +128,7 @@
         #add-first-card-btn { background-color: var(--primary-color); }
         #r2-filter-status { display: none; padding: 8px 12px; margin-bottom: 1rem; border-radius: 4px; background-color: #e2e3e5; text-align: center; font-size: 0.9em; }
         #r2-filter-status button { background: none; border: none; color: var(--primary-color); text-decoration: underline; cursor: pointer; padding: 0 4px; font-size: inherit; }
-        .card-owner-info {
-            margin: 0;
-            word-break: break-all;
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-        }
+        .card-owner-info { margin: 0; word-break: break-all; display: flex; justify-content: space-between; align-items: baseline; }
         .card-owner-info .is-own { font-size: 0.8em; color: var(--primary-color); font-weight: bold; }
         @media (max-width: 768px) {
             .container-wrapper { position: static; transform: none; width: auto; margin: 1rem; padding: 1rem; cursor: default; }
@@ -141,28 +138,13 @@
             body.drag-over::before { display: none; }
             h1 { font-size: 1.5rem; }
             .player-card { flex-direction: column; align-items: stretch; }
-            .card-actions-wrapper { flex-direction: row; justify-content: space-between; align-items: center; }
+            .player-actions { flex-direction: row; justify-content: space-between; align-items: center; }
             #auth-status-container { position: static; justify-content: center; margin: 1rem 1rem 0; width: auto; flex-wrap: wrap; }
         }
-        #auth-status-container {
-            position: fixed;
-            top: 15px;
-            right: 20px;
-            z-index: 1001;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            background-color: rgba(255, 255, 255, 0.9);
-            padding: 8px 12px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
+        #auth-status-container { position: fixed; top: 15px; right: 20px; z-index: 1001; display: flex; align-items: center; gap: 15px; background-color: rgba(255, 255, 255, 0.9); padding: 8px 12px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         #user-display-wrapper { display: flex; align-items: center; gap: 8px; }
         #user-info { font-weight: bold; color: #333; font-size: 14px; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        #auth-status-container button {
-            padding: 8px 16px; font-size: 14px; font-weight: bold; color: white;
-            border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.2s; margin: 0;
-        }
+        #auth-status-container button { padding: 8px 16px; font-size: 14px; font-weight: bold; color: white; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.2s; margin: 0; }
         #login-btn { background-color: var(--primary-color); }
         #login-btn:hover:not(:disabled) { background-color: var(--primary-hover-color); }
         #logout-btn { background-color: var(--secondary-color); }
@@ -170,12 +152,7 @@
         #edit-username-btn { width: 28px; height: 28px; font-size: 1rem; padding: 0; background-color: #e9ecef; color: #495057; border-radius: 50%; }
         #edit-username-btn:hover { background-color: #dee2e6; }
         .locked-feature { position: relative; pointer-events: none; }
-        .locked-feature::after {
-            content: 'ログインが必要です'; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background-color: rgba(240, 240, 240, 0.7); color: #555; font-size: 1rem; font-weight: bold;
-            display: flex; justify-content: center; align-items: center; text-align: center;
-            border-radius: inherit; z-index: 10; cursor: not-allowed;
-        }
+        .locked-feature::after { content: 'ログインが必要です'; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(240, 240, 240, 0.7); color: #555; font-size: 1rem; font-weight: bold; display: flex; justify-content: center; align-items: center; text-align: center; border-radius: inherit; z-index: 10; cursor: not-allowed; }
         .tab-button.locked-feature::after { border-radius: 0; font-size: 0.8em; }
         #r2-gallery-wrapper.locked-feature::after { border-radius: 8px; }
         #r2-pagination-controls { display: none; justify-content: center; align-items: center; gap: 1rem; margin-top: 1rem; }
@@ -308,23 +285,7 @@
     let db;
     let dbInitializationPromise;
 
-    function initDB() {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open(DB_NAME, DB_VERSION);
-            request.onerror = (event) => reject("IndexedDBのオープンに失敗しました: " + event.target.errorCode);
-            request.onsuccess = (event) => { db = event.target.result; resolve(db); };
-            request.onupgradeneeded = (event) => {
-                const db = event.target.result;
-                if (!db.objectStoreNames.contains(STORE_NAME)) {
-                    const store = db.createObjectStore(STORE_NAME, { keyPath: 'r2_key' });
-                    store.createIndex('created_at', 'created_at', { unique: false });
-                }
-                if (!db.objectStoreNames.contains(SETTINGS_STORE_NAME)) {
-                    db.createObjectStore(SETTINGS_STORE_NAME, { keyPath: 'key' });
-                }
-            };
-        });
-    }
+    function initDB() { return new Promise((resolve, reject) => { const request = indexedDB.open(DB_NAME, DB_VERSION); request.onerror = (event) => reject("IndexedDBのオープンに失敗しました: " + event.target.errorCode); request.onsuccess = (event) => { db = event.target.result; resolve(db); }; request.onupgradeneeded = (event) => { const db = event.target.result; if (!db.objectStoreNames.contains(STORE_NAME)) { const store = db.createObjectStore(STORE_NAME, { keyPath: 'r2_key' }); store.createIndex('created_at', 'created_at', { unique: false }); } if (!db.objectStoreNames.contains(SETTINGS_STORE_NAME)) { db.createObjectStore(SETTINGS_STORE_NAME, { keyPath: 'key' }); } }; }); }
     function addTestPost(post) { return new Promise((resolve, reject) => { if (!db) return reject("DBが初期化されていません。"); const transaction = db.transaction([STORE_NAME], 'readwrite'); const store = transaction.objectStore(STORE_NAME); const request = store.add(post); request.onsuccess = () => resolve(); request.onerror = (event) => reject("投稿の追加に失敗しました: " + event.target.error); }); }
     function getAllTestPosts() { return new Promise((resolve, reject) => { if (!db) return reject("DBが初期化されていません。"); const transaction = db.transaction([STORE_NAME], 'readonly'); const store = transaction.objectStore(STORE_NAME); const request = store.getAll(); request.onsuccess = (event) => resolve(event.target.result); request.onerror = (event) => reject("投稿の取得に失敗しました: " + event.target.error); }); }
     function deleteTestPost(key) { return new Promise((resolve, reject) => { if (!db) return reject("DBが初期化されていません。"); const transaction = db.transaction([STORE_NAME], 'readwrite'); const store = transaction.objectStore(STORE_NAME); const request = store.delete(key); request.onsuccess = () => resolve(); request.onerror = (event) => reject("投稿の削除に失敗しました: " + event.target.error); }); }
@@ -332,159 +293,95 @@
 
     // --- Authentication (Firebase) ---
     function setupAuth() { const firebaseConfig = { apiKey: "AIzaSyCfnWPi16Tt8PQGzb6Qo2ql3yFf2GSGaN8", authDomain: "voice-1e03c.firebaseapp.com", projectId: "voice-1e03c", storageBucket: "voice-1e03c.firebasestorage.app", messagingSenderId: "1067746798695", appId: "1:1067746798695:web:76bc39f08b51fc512c38c2", measurementId: "G-W5TEENZEJ0" }; const PROTECTED_API_PATHS = ['/api/upload', '/api/delete', '/api/profile', '/api/my-profile']; firebase.initializeApp(firebaseConfig); auth = firebase.auth(); let currentUser = null; let userProfile = null; async function getIdToken() { if (!auth.currentUser) return null; try { return await auth.currentUser.getIdToken(true); } catch (error) { console.error("IDトークンの取得に失敗:", error); return null; } } const originalFetch = window.fetch; window.fetch = async function(...args) { const url = new URL(args[0], window.location.origin); const options = args[1] || {}; const isProtectedRoute = PROTECTED_API_PATHS.some(path => url.pathname.startsWith(path)); const needsAuthForFilter = url.pathname.startsWith('/api/list') && url.searchParams.get('filter') === 'mine'; if (isProtectedRoute || needsAuthForFilter) { if (!currentUser) { console.warn('保護されたAPIへのリクエストがブロックされました: 未ログイン'); return Promise.reject(new Response(JSON.stringify({ error: 'Authentication required.' }),{ status: 401, statusText: 'Unauthorized' })); } const token = await getIdToken(); if (!token) { console.error('保護されたAPIへのリクエストがブロックされました: トークン取得失敗'); return Promise.reject(new Response(JSON.stringify({ error: 'Failed to retrieve auth token.' }), { status: 401, statusText: 'Unauthorized' })); } options.headers = { ...options.headers, 'Authorization': `Bearer ${token}` }; args[1] = options; } return originalFetch.apply(this, args); }; async function handleEditUsername() { if (!currentUser) return; const currentName = userProfile ? userProfile.username : (currentUser.displayName || ''); const newName = prompt("新しい表示名を入力してください（10文字以内）:", currentName); if (newName === null) { return; } const trimmedName = newName.trim(); if (trimmedName === "") { alert("表示名は空にできません。"); return; } if (trimmedName.length > 10) { alert("表示名は10文字以内で入力してください。"); return; } try { const response = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: trimmedName }) }); if (!response.ok) { const errData = await response.json().catch(() => ({ error: 'サーバーエラー' })); throw new Error(errData.error || '表示名の更新に失敗しました。'); } const result = await response.json(); userProfile = { username: result.username }; document.getElementById('user-info').textContent = result.username; document.getElementById('user-info').title = result.username; alert("表示名を更新しました。"); } catch (error) { console.error("表示名の更新に失敗しました:", error); alert(`エラーが発生しました: ${error.message}`); } } function updateUIForAuthState(user) { const loginBtn = document.getElementById('login-btn'); const logoutBtn = document.getElementById('logout-btn'); const userDisplayWrapper = document.getElementById('user-display-wrapper'); const userInfo = document.getElementById('user-info'); const r2GalleryTab = document.querySelector('.tab-button[data-tab="r2-gallery"]'); const r2GalleryWrapper = document.getElementById('r2-gallery-wrapper'); const r2FilterMineToggle = document.getElementById('r2-filter-mine-toggle'); const saveToR2Btn = document.getElementById('save-to-r2-btn'); const savePreviewToR2Btn = document.getElementById('save-preview-to-r2-btn'); currentUser = user; window.currentUser = user; if (user) { loginBtn.style.display = 'none'; logoutBtn.style.display = 'block'; userDisplayWrapper.style.display = 'flex'; fetch('/api/profile').then(res => res.ok ? res.json() : null) .then(profile => { userProfile = profile; const displayName = profile ? profile.username : (user.displayName || user.email); userInfo.textContent = displayName; userInfo.title = displayName; }).catch(err => { console.error("プロファイル取得エラー:", err); const displayName = user.displayName || user.email; userInfo.textContent = displayName; userInfo.title = displayName; }); document.getElementById('edit-username-btn').onclick = handleEditUsername; r2GalleryTab.classList.remove('locked-feature'); r2GalleryWrapper.classList.remove('locked-feature'); if (saveToR2Btn) saveToR2Btn.disabled = false; if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = false; if (r2FilterMineToggle) r2FilterMineToggle.disabled = false; if (typeof loadR2Gallery === 'function' && r2GalleryTab.classList.contains('active')) { loadR2Gallery(); } } else { currentUser = null; userProfile = null; loginBtn.style.display = 'block'; logoutBtn.style.display = 'none'; userDisplayWrapper.style.display = 'none'; r2GalleryTab.classList.add('locked-feature'); r2GalleryWrapper.classList.add('locked-feature'); if (saveToR2Btn) saveToR2Btn.disabled = true; if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = true; if (r2FilterMineToggle) { r2FilterMineToggle.checked = false; r2FilterMineToggle.disabled = true; } if (r2GalleryTab.classList.contains('active')) { document.querySelector('.tab-button[data-tab="tts"]').click(); } } } auth.onAuthStateChanged(updateUIForAuthState); }
+    
+    // ★ NEW: Helper function to format time
+    function formatTime(seconds) {
+        const minutes = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${minutes}:${secs.toString().padStart(2, '0')}`;
+    }
 
     // --- R2 Storage and Gallery Functions ---
     function base64toBlob(base64, contentType = '', sliceSize = 512) { const byteCharacters = atob(base64); const byteArrays = []; for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) { const slice = byteCharacters.slice(offset, offset + sliceSize); const byteNumbers = new Array(slice.length); for (let i = 0; i < slice.length; i++) { byteNumbers[i] = slice.charCodeAt(i); } byteArrays.push(new Uint8Array(byteNumbers)); } return new Blob(byteArrays, {type: contentType}); }
-    function renderR2Gallery(files) { const r2GalleryContainer = document.getElementById('r2-gallery-container'); r2GalleryContainer.querySelectorAll('audio[src^="blob:"]').forEach(audio => { URL.revokeObjectURL(audio.src); }); if (!files || files.length === 0) { r2GalleryContainer.innerHTML = r2GalleryState.currentPage === 1 ? '<p>条件に一致する音声はありません。</p>' : '<p>これ以上音声はありません。</p>'; return; } r2GalleryContainer.innerHTML = ''; const currentUid = window.currentUser ? window.currentUser.uid : null; files.forEach(file => { const card = document.createElement('div'); card.className = 'player-card'; card.dataset.fileKey = file.r2_key; card.dataset.userId = file.user_id; const isTestPost = file.is_test_post; const modelDisplayName = (typeof getModelData === 'function' && getModelData(file.model_name).displayName) || file.model_name; const formatConfig = (typeof getFormatConfigByContentType === 'function' && getFormatConfigByContentType(isTestPost ? file.content_type : `audio/${file.r2_key.split('.').pop()}`)) || { extension: 'bin' }; const downloadFilename = (typeof createSafeFileName === 'function' && createSafeFileName(file.model_name, file.text_content, formatConfig.extension)) || 'audio.bin'; const isOwnFile = currentUid && file.user_id === currentUid; const ownerUsername = file.username || '匿名ユーザー'; const ownerIndicator = isOwnFile ? ` <span class="is-own">(自分)</span>` : ''; const deleteBtnDataAttr = isTestPost ? `data-is-test-post="true"` : ''; const actionButton = (isOwnFile || isTestPost) ? `<button class="icon-btn btn-delete-r2" title="削除" ${deleteBtnDataAttr}>🗑️</button>` : `<button class="icon-btn btn-view-user-files" title="この投稿者の他の音声">👤</button>`; let ownerInfoHtml = ''; if (r2GalleryState.userId) { ownerInfoHtml = `<span>${ownerUsername}${ownerIndicator}</span>`; } let audioSrc, downloadHref; if (isTestPost) { try { const blob = base64toBlob(file.audio_base_64, file.content_type); const url = URL.createObjectURL(blob); audioSrc = url; downloadHref = url; } catch (e) { console.error("Error creating blob URL for test post:", e); audioSrc = ''; downloadHref = '#'; } } else { audioSrc = `/api/get/${encodeURIComponent(file.r2_key)}`; downloadHref = audioSrc; } card.innerHTML = ` <div class="card-main"> <div style="margin-bottom: 8px;"> <div class="card-owner-info"> <span>${modelDisplayName}</span> ${ownerInfoHtml} </div> <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p> </div> <audio controls preload="none" src="${audioSrc}"></audio> </div> <div class="player-actions"> <a href="${downloadHref}" download="${downloadFilename}" class="icon-btn download-link" title="ダウンロード">📥</a> ${actionButton} </div> `; r2GalleryContainer.appendChild(card); }); }
+    function renderR2Gallery(files) {
+        const r2GalleryContainer = document.getElementById('r2-gallery-container');
+        r2GalleryContainer.querySelectorAll('audio').forEach(audio => { if (audio.src.startsWith('blob:')) URL.revokeObjectURL(audio.src); });
+        if (!files || files.length === 0) { r2GalleryContainer.innerHTML = r2GalleryState.currentPage === 1 ? '<p>条件に一致する音声はありません。</p>' : '<p>これ以上音声はありません。</p>'; return; }
+        r2GalleryContainer.innerHTML = '';
+        const currentUid = window.currentUser ? window.currentUser.uid : null;
+        files.forEach(file => {
+            const card = document.createElement('div');
+            card.className = 'player-card';
+            card.dataset.fileKey = file.r2_key;
+            card.dataset.userId = file.user_id;
+            const isTestPost = file.is_test_post;
+            const modelDisplayName = (typeof getModelData === 'function' && getModelData(file.model_name).displayName) || file.model_name;
+            const formatConfig = (typeof getFormatConfigByContentType === 'function' && getFormatConfigByContentType(isTestPost ? file.content_type : `audio/${file.r2_key.split('.').pop()}`)) || { extension: 'bin' };
+            const downloadFilename = (typeof createSafeFileName === 'function' && createSafeFileName(file.model_name, file.text_content, formatConfig.extension)) || 'audio.bin';
+            const isOwnFile = currentUid && file.user_id === currentUid;
+            const ownerUsername = file.username || '匿名ユーザー';
+            const ownerIndicator = isOwnFile ? ` <span class="is-own">(自分)</span>` : '';
+            const deleteBtnDataAttr = isTestPost ? `data-is-test-post="true"` : '';
+            const actionButton = (isOwnFile || isTestPost) ? `<button class="icon-btn btn-delete-r2" title="削除" ${deleteBtnDataAttr}>🗑️</button>` : `<button class="icon-btn btn-view-user-files" title="この投稿者の他の音声">👤</button>`;
+            let ownerInfoHtml = '';
+            if (r2GalleryState.userId) { ownerInfoHtml = `<span>${ownerUsername}${ownerIndicator}</span>`; }
+            let audioSrc, downloadHref;
+            if (isTestPost) { try { const blob = base64toBlob(file.audio_base_64, file.content_type); const url = URL.createObjectURL(blob); audioSrc = url; downloadHref = url; } catch (e) { console.error("Error creating blob URL for test post:", e); audioSrc = ''; downloadHref = '#'; } } else { audioSrc = `/api/get/${encodeURIComponent(file.r2_key)}`; downloadHref = audioSrc; }
+            
+            // <!-- ★ NEW/MODIFIED: HTML for Custom Audio Player -->
+            card.innerHTML = `
+                <div class="card-main">
+                    <div style="margin-bottom: 8px;">
+                        <div class="card-owner-info">
+                            <span>${modelDisplayName}</span> ${ownerInfoHtml}
+                        </div>
+                        <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p>
+                    </div>
+                    <div class="custom-audio-player">
+                        <button class="play-pause-btn">▶</button>
+                        <div class="progress-wrapper"><div class="progress-bar"></div></div>
+                        <span class="time-display">0:00 / --:--</span>
+                        <audio preload="none" src="${audioSrc}" style="display: none;"></audio>
+                    </div>
+                </div>
+                <div class="player-actions">
+                    <a href="${downloadHref}" download="${downloadFilename}" class="icon-btn download-link" title="ダウンロード">📥</a>
+                    ${actionButton}
+                </div>`;
+            r2GalleryContainer.appendChild(card);
+
+            // ★ NEW: Attach event listeners for the custom player
+            const audio = card.querySelector('audio');
+            const playBtn = card.querySelector('.play-pause-btn');
+            const progressBar = card.querySelector('.progress-bar');
+            const timeDisplay = card.querySelector('.time-display');
+
+            audio.addEventListener('loadedmetadata', () => {
+                timeDisplay.textContent = `${formatTime(0)} / ${formatTime(audio.duration)}`;
+            });
+            audio.addEventListener('timeupdate', () => {
+                const progressPercent = (audio.currentTime / audio.duration) * 100;
+                progressBar.style.width = `${progressPercent}%`;
+                timeDisplay.textContent = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`;
+            });
+            audio.addEventListener('play', () => { playBtn.textContent = '❚❚'; playBtn.classList.add('playing'); });
+            audio.addEventListener('pause', () => { playBtn.textContent = '▶'; playBtn.classList.remove('playing'); });
+            audio.addEventListener('ended', () => { playBtn.textContent = '▶'; playBtn.classList.remove('playing'); progressBar.style.width = '0%'; audio.currentTime = 0; });
+        });
+    }
     function updateR2FilterStatusUI(username = null) { const r2FilterStatus = document.getElementById('r2-filter-status'); if (r2GalleryState.userId) { const displayName = username ? `「${username}」さん` : '特定ユーザー'; r2FilterStatus.innerHTML = `${displayName}の投稿を表示中 <button id="clear-user-filter-btn">フィルター解除</button>`; r2FilterStatus.style.display = 'block'; document.getElementById('clear-user-filter-btn').onclick = () => { r2GalleryState.userId = ''; loadR2Gallery(); }; } else { r2FilterStatus.style.display = 'none'; } }
     function updateR2PaginationUI() { const r2PaginationControls = document.getElementById('r2-pagination-controls'); const r2PageInfo = document.getElementById('r2-page-info'); const r2PrevPageBtn = document.getElementById('r2-prev-page-btn'); const r2NextPageBtn = document.getElementById('r2-next-page-btn'); r2PaginationControls.style.display = 'flex'; r2PageInfo.textContent = `ページ ${r2GalleryState.currentPage}`; r2PrevPageBtn.disabled = r2GalleryState.currentPage <= 1 || r2GalleryState.isLoading; r2NextPageBtn.disabled = !r2GalleryState.hasNextPage || r2GalleryState.isLoading; }
 
-    // ★★★ START: 新しいチャンクベースのデータ取得ロジック (MODIFIED) ★★★
+    // ★★★ START: 新しいチャンクベースのデータ取得ロジック ★★★
     const API_BASE = '/api/chunk';
-    let latestMetadata = null; // メタデータをメモリにキャッシュ
-    const chunkCache = new Map(); // チャンクデータをメモリにキャッシュ
+    let latestMetadata = null; let chunkCache = new Map();
+    async function getLatestMetadata(forceRefresh = false) { if (latestMetadata && !forceRefresh) { return latestMetadata; } try { const response = await fetch(`${API_BASE}/latest`, { cache: 'no-store' }); if (!response.ok) throw new Error('Failed to fetch latest metadata'); const data = await response.json(); latestMetadata = data.metadata; chunkCache.set(latestMetadata.latestChunkNumber, data.audios); return latestMetadata; } catch (error) { console.error("Error fetching metadata:", error); latestMetadata = null; chunkCache.clear(); throw error; } }
+    async function fetchAndBuildPage(pageNumber) { const metadata = await getLatestMetadata(); if (!metadata) { return []; } const { totalAudios, latestChunkNumber } = metadata; const startItemIndex = (pageNumber - 1) * R2_ITEMS_PER_PAGE; if (pageNumber > 1 && startItemIndex >= totalAudios) { return []; } const endItemIndex = startItemIndex + R2_ITEMS_PER_PAGE; const requiredChunks = new Set(); const startChunkIndex = Math.floor(startItemIndex / R2_ITEMS_PER_PAGE); const safeEndItemIndex = Math.min(endItemIndex, totalAudios); const endChunkIndex = Math.floor((safeEndItemIndex > 0 ? safeEndItemIndex - 1 : 0) / R2_ITEMS_PER_PAGE); for (let i = startChunkIndex; i <= endChunkIndex; i++) { const chunkNumber = latestChunkNumber - i; if (chunkNumber > 0) { requiredChunks.add(chunkNumber); } } const fetchPromises = []; requiredChunks.forEach(chunkNum => { if (chunkCache.has(chunkNum)) { fetchPromises.push(Promise.resolve(chunkCache.get(chunkNum))); } else if (chunkNum === latestChunkNumber) { fetchPromises.push(fetch(`${API_BASE}/latest`).then(res => res.json()).then(data => { chunkCache.set(chunkNum, data.audios); return data.audios; })); } else { fetchPromises.push(fetch(`${API_BASE}/${chunkNum}`).then(res => res.json()).then(data => { chunkCache.set(chunkNum, data); return data; })); } }); const chunkResults = await Promise.all(fetchPromises); return chunkResults.flat(); }
+    async function loadR2Gallery() { const r2GalleryContainer = document.getElementById('r2-gallery-container'); if (r2GalleryState.isLoading) return; r2GalleryState.isLoading = true; r2GalleryContainer.innerHTML = '<p>読み込み中...</p>'; updateR2PaginationUI(); updateR2FilterStatusUI(); try { if(r2GalleryState.filter !== 'all' || r2GalleryState.modelId || r2GalleryState.searchText || r2GalleryState.userId) { const params = new URLSearchParams({ page: r2GalleryState.currentPage, limit: R2_ITEMS_PER_PAGE }); if (r2GalleryState.filter === 'mine') params.set('filter', 'mine'); if (r2GalleryState.modelId) params.set('modelId', r2GalleryState.modelId); if (r2GalleryState.searchText) params.set('searchText', r2GalleryState.searchText); if (r2GalleryState.userId) params.set('userId', r2GalleryState.userId); const response = await fetch(`/api/list?${params.toString()}`); if (!response.ok) throw new Error('Failed to fetch filtered list'); const files = await response.json(); r2GalleryState.hasNextPage = files.length === R2_ITEMS_PER_PAGE; renderR2Gallery(files); } else { const chunkData = await fetchAndBuildPage(r2GalleryState.currentPage); let filesToDisplay; if (r2GalleryState.currentPage === 1) { const allTestPosts = await getAllTestPosts(); const combined = [...chunkData, ...allTestPosts]; const unique = Array.from(new Map(combined.map(item => [item.r2_key, item])).values()); unique.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); filesToDisplay = unique.slice(0, R2_ITEMS_PER_PAGE); } else { const pageStart = (r2GalleryState.currentPage - 1) * R2_ITEMS_PER_PAGE; const pageEnd = pageStart + R2_ITEMS_PER_PAGE; filesToDisplay = chunkData.slice(pageStart % R2_ITEMS_PER_PAGE, (pageEnd % R2_ITEMS_PER_PAGE) || R2_ITEMS_PER_PAGE); } renderR2Gallery(filesToDisplay); const metadata = await getLatestMetadata(); if (metadata) { const totalPages = Math.ceil(metadata.totalAudios / R2_ITEMS_PER_PAGE); r2GalleryState.hasNextPage = r2GalleryState.currentPage < totalPages; } else { r2GalleryState.hasNextPage = false; } } } catch (error) { console.error('R2 gallery load error:', error); r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`; r2GalleryState.hasNextPage = false; } finally { r2GalleryState.isLoading = false; updateR2PaginationUI(); } }
+    // ★★★ END: 新しいチャンクベースのデータ取得ロジック ★★★
 
-    async function getLatestMetadata(forceRefresh = false) {
-        if (latestMetadata && !forceRefresh) {
-            return latestMetadata;
-        }
-        try {
-            const response = await fetch(`${API_BASE}/latest`, { cache: 'no-store' });
-            if (!response.ok) throw new Error('Failed to fetch latest metadata');
-            const data = await response.json();
-            latestMetadata = data.metadata;
-            chunkCache.set(latestMetadata.latestChunkNumber, data.audios);
-            console.log('Updated metadata:', latestMetadata);
-            return latestMetadata;
-        } catch (error) {
-            console.error("Error fetching metadata:", error);
-            latestMetadata = null;
-            chunkCache.clear();
-            throw error;
-        }
-    }
-
-    async function fetchAndBuildPage(pageNumber) {
-        console.log(`Building data for page ${pageNumber}...`);
-        
-        const metadata = await getLatestMetadata();
-        if (!metadata) {
-            console.warn("Metadata not available, returning empty array.");
-            return [];
-        }
-        const { totalAudios, latestChunkNumber } = metadata;
-        
-        const startItemIndex = (pageNumber - 1) * R2_ITEMS_PER_PAGE;
-        const endItemIndex = startItemIndex + R2_ITEMS_PER_PAGE;
-
-        if (pageNumber > 1 && startItemIndex >= totalAudios) {
-            console.log("Requested page is out of bounds.");
-            return [];
-        }
-
-        const requiredChunks = new Set();
-        const startChunkIndex = Math.floor(startItemIndex / R2_ITEMS_PER_PAGE);
-        const safeEndItemIndex = Math.min(endItemIndex, totalAudios);
-        const endChunkIndex = Math.floor((safeEndItemIndex > 0 ? safeEndItemIndex - 1 : 0) / R2_ITEMS_PER_PAGE);
-
-        for (let i = startChunkIndex; i <= endChunkIndex; i++) {
-            const chunkNumber = latestChunkNumber - i;
-            if (chunkNumber > 0) {
-                requiredChunks.add(chunkNumber);
-            }
-        }
-        
-        const fetchPromises = [];
-        requiredChunks.forEach(chunkNum => {
-            if (chunkCache.has(chunkNum)) {
-                fetchPromises.push(Promise.resolve(chunkCache.get(chunkNum)));
-            } else if (chunkNum === latestChunkNumber) {
-                fetchPromises.push(
-                    fetch(`${API_BASE}/latest`).then(res => res.json()).then(data => {
-                        chunkCache.set(chunkNum, data.audios);
-                        return data.audios;
-                    })
-                );
-            } else {
-                fetchPromises.push(
-                    fetch(`${API_BASE}/${chunkNum}`).then(res => res.json()).then(data => {
-                        chunkCache.set(chunkNum, data);
-                        return data;
-                    })
-                );
-            }
-        });
-        
-        console.log("Fetching chunks:", ...requiredChunks);
-        const chunkResults = await Promise.all(fetchPromises);
-        
-        const combinedAudios = chunkResults.flat();
-        
-        console.log(`Page ${pageNumber} built. Items from chunks: ${combinedAudios.length}`);
-        return combinedAudios;
-    }
-    
-    async function loadR2Gallery() {
-        const r2GalleryContainer = document.getElementById('r2-gallery-container');
-        if (r2GalleryState.isLoading) return;
-        r2GalleryState.isLoading = true;
-        r2GalleryContainer.innerHTML = '<p>読み込み中...</p>';
-        updateR2PaginationUI();
-        updateR2FilterStatusUI();
-        
-        try {
-            if(r2GalleryState.filter !== 'all' || r2GalleryState.modelId || r2GalleryState.searchText || r2GalleryState.userId) {
-                console.log("Filters active, using legacy /api/list endpoint.");
-                const params = new URLSearchParams({ page: r2GalleryState.currentPage, limit: R2_ITEMS_PER_PAGE });
-                if (r2GalleryState.filter === 'mine') params.set('filter', 'mine');
-                if (r2GalleryState.modelId) params.set('modelId', r2GalleryState.modelId);
-                if (r2GalleryState.searchText) params.set('searchText', r2GalleryState.searchText);
-                if (r2GalleryState.userId) params.set('userId', r2GalleryState.userId);
-                
-                const response = await fetch(`/api/list?${params.toString()}`);
-                if (!response.ok) throw new Error('Failed to fetch filtered list');
-                const files = await response.json();
-                r2GalleryState.hasNextPage = files.length === R2_ITEMS_PER_PAGE;
-                renderR2Gallery(files);
-            } else {
-                const chunkData = await fetchAndBuildPage(r2GalleryState.currentPage);
-                let filesToDisplay;
-
-                if (r2GalleryState.currentPage === 1) {
-                    const allTestPosts = await getAllTestPosts();
-                    const combined = [...chunkData, ...allTestPosts];
-                    const unique = Array.from(new Map(combined.map(item => [item.r2_key, item])).values());
-                    unique.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-                    filesToDisplay = unique.slice(0, R2_ITEMS_PER_PAGE);
-                } else {
-                    const pageStart = (r2GalleryState.currentPage - 1) * R2_ITEMS_PER_PAGE;
-                    const pageEnd = pageStart + R2_ITEMS_PER_PAGE;
-                    filesToDisplay = chunkData.slice(pageStart % R2_ITEMS_PER_PAGE, (pageEnd % R2_ITEMS_PER_PAGE) || R2_ITEMS_PER_PAGE);
-                }
-                
-                renderR2Gallery(filesToDisplay);
-                
-                const metadata = await getLatestMetadata();
-                if (metadata) {
-                    const totalPages = Math.ceil(metadata.totalAudios / R2_ITEMS_PER_PAGE);
-                    r2GalleryState.hasNextPage = r2GalleryState.currentPage < totalPages;
-                } else {
-                    r2GalleryState.hasNextPage = false;
-                }
-            }
-        } catch (error) {
-            console.error('R2 gallery load error:', error);
-            r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`;
-            r2GalleryState.hasNextPage = false;
-        } finally {
-            r2GalleryState.isLoading = false;
-            updateR2PaginationUI();
-        }
-    }
-    // ★★★ END: 新しいチャンクベースのデータ取得ロジック (MODIFIED) ★★★
-
-    async function saveAudioAsTestPost(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('テスト投稿の対象データが不完全です。', true); return; } setStatus('テスト投稿を準備中...'); button.disabled = true; let userId, username; try { if (window.currentUser) { const response = await fetch('/api/my-profile'); if (!response.ok) { const err = await response.json().catch(() => ({error: 'サーバーからプロファイルを取得できませんでした。'})); throw new Error(err.error); } const myProfile = await response.json(); userId = myProfile.userId; username = myProfile.username; } else { userId = 'local-user'; username = '自分 (未ログイン)'; } const reader = new FileReader(); reader.readAsDataURL(blob); reader.onloadend = async () => { try { const base64Audio = reader.result.split(',')[1]; const newPost = { r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`, model_name: modelId, text_content: text, user_id: userId, username: username, audio_base_64: base64Audio, content_type: blob.type, is_test_post: true, created_at: new Date().toISOString() }; await addTestPost(newPost); await enforceLimit(); setStatus('音声をR2に保存しました。'); /* ★ MODIFIED: メッセージを統一 */ const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if (r2TabButton) r2TabButton.click(); } catch(dbError) { console.error('IndexedDBへの保存エラー:', dbError); setStatus(`テスト投稿の保存に失敗しました: ${dbError.message}`, true); } }; reader.onerror = () => { throw new Error("ファイルの読み込みに失敗しました。"); }; } catch (error) { console.error('Test post save error:', error); setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true); } finally { button.disabled = false; } }
-    async function saveAudioToR2(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('保存対象の音声データが不完全です。', true); return; } setStatus('R2に音声を保存中...'); button.disabled = true; try { const reader = new FileReader(); reader.readAsDataURL(blob); reader.onloadend = async () => { try { const base64Audio = reader.result.split(',')[1]; const response = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: modelId, text: text, audioBase64: base64Audio, contentType: blob.type }) }); if (!response.ok) { const errorData = await response.json().catch(() => ({ error: response.statusText, reason: null })); if (response.status === 403 && errorData.reason === 'muted') { setStatus(errorData.error); await saveAudioAsTestPost(blob, modelId, text, button); return; } throw new Error(`R2への保存に失敗: ${errorData.error}`); } const result = await response.json(); setStatus('音声をR2に保存しました。'); const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) { r2TabButton.click(); } } catch (err) { console.error('R2 save error:', err); setStatus(err.message, true); } finally { if (button.disabled) { button.disabled = false; } } }; reader.onerror = (error) => { throw error; }; } catch (error) { console.error('File reading error:', error); setStatus('ファイルの読み込みに失敗しました。', true); button.disabled = false; } }
+    async function saveAudioAsTestPost(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('テスト投稿の対象データが不完全です。', true); return; } setStatus('テスト投稿を準備中...'); button.disabled = true; let userId, username; try { if (window.currentUser) { const response = await fetch('/api/my-profile'); if (!response.ok) { const err = await response.json().catch(() => ({error: 'サーバーからプロファイルを取得できませんでした。'})); throw new Error(err.error); } const myProfile = await response.json(); userId = myProfile.userId; username = myProfile.username; } else { userId = 'local-user'; username = '自分 (未ログイン)'; } const reader = new FileReader(); reader.readAsDataURL(blob); reader.onloadend = async () => { try { const base64Audio = reader.result.split(',')[1]; const newPost = { r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`, model_name: modelId, text_content: text, user_id: userId, username: username, audio_base_64: base64Audio, content_type: blob.type, is_test_post: true, created_at: new Date().toISOString() }; await addTestPost(newPost); await enforceLimit(); setStatus('音声をR2に保存しました。'); const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if (r2TabButton) r2TabButton.click(); } catch(dbError) { console.error('IndexedDBへの保存エラー:', dbError); setStatus(`テスト投稿の保存に失敗しました: ${dbError.message}`, true); } }; reader.onerror = () => { throw new Error("ファイルの読み込みに失敗しました。"); }; } catch (error) { console.error('Test post save error:', error); setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true); } finally { button.disabled = false; } }
+    async function saveAudioToR2(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('保存対象の音声データが不完全です。', true); return; } setStatus('R2に音声を保存中...'); button.disabled = true; try { const reader = new FileReader(); reader.readAsDataURL(blob); reader.onloadend = async () => { try { const base64Audio = reader.result.split(',')[1]; const response = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: modelId, text: text, audioBase64: base64Audio, contentType: blob.type }) }); if (!response.ok) { const errorData = await response.json().catch(() => ({ error: response.statusText, reason: null })); if (response.status === 403 && errorData.reason === 'muted') { await saveAudioAsTestPost(blob, modelId, text, button); /* ★ MODIFIED: メッセージは saveAudioAsTestPost 側で統一 */ return; } throw new Error(`R2への保存に失敗: ${errorData.error}`); } const result = await response.json(); setStatus('音声をR2に保存しました。'); const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) { r2TabButton.click(); } } catch (err) { console.error('R2 save error:', err); setStatus(err.message, true); } finally { if (button.disabled) { button.disabled = false; } } }; reader.onerror = (error) => { throw error; }; } catch (error) { console.error('File reading error:', error); setStatus('ファイルの読み込みに失敗しました。', true); button.disabled = false; } }
     
     // --- Event Listener Setup (Auth and Storage) ---
     function setupAuthEventListeners() { document.getElementById('login-btn').addEventListener('click', () => { const provider = new firebase.auth.GoogleAuthProvider(); auth.signInWithPopup(provider).catch(error => { if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') { console.log(`ログインがキャンセルされました: ${error.code}`); } else { console.error("Googleログインエラー:", error); alert(`ログインに失敗しました: ${error.message}`); } }); }); document.getElementById('logout-btn').addEventListener('click', () => auth.signOut()); }
@@ -498,7 +395,46 @@
         document.getElementById('r2-search-text-input').addEventListener('input', handleFilterChange);
         document.getElementById('r2-prev-page-btn').addEventListener('click', () => { if (r2GalleryState.currentPage > 1) { r2GalleryState.currentPage--; loadR2Gallery(); } });
         document.getElementById('r2-next-page-btn').addEventListener('click', () => { if (r2GalleryState.hasNextPage) { r2GalleryState.currentPage++; loadR2Gallery(); } });
-        document.getElementById('r2-gallery-container').addEventListener('click', async (e) => { const card = e.target.closest('.player-card'); if (!card) return; const deleteButton = e.target.closest('.btn-delete-r2'); if (deleteButton) { const fileKey = card.dataset.fileKey; const isTestPost = deleteButton.dataset.isTestPost === 'true'; if (isTestPost) { if (confirm(`このテスト投稿をブラウザから削除しますか？`)) { try { await deleteTestPost(fileKey); const audioEl = card.querySelector('audio'); if (audioEl && audioEl.src.startsWith('blob:')) { URL.revokeObjectURL(audioEl.src); } card.remove(); } catch(dbError) { alert(`削除に失敗しました: ${dbError.message}`); } } } else { const downloadLink = card.querySelector('.download-link'); const filename = downloadLink ? downloadLink.download : fileKey; if (confirm(`ファイル「${filename}」を完全に削除しますか？この操作は元に戻せません。`)) { try { deleteButton.disabled = true; const response = await fetch(`/api/delete/${encodeURIComponent(fileKey)}`, { method: 'DELETE' }); if (!response.ok) throw new Error((await response.json()).error || '削除に失敗しました'); loadR2Gallery(); } catch(error) { alert(error.message); deleteButton.disabled = false; } } } } else if (e.target.closest('.btn-view-user-files')) { r2GalleryState.userId = card.dataset.userId; r2GalleryState.currentPage = 1; r2GalleryState.filter = ''; r2GalleryState.modelId = ''; r2GalleryState.searchText = ''; document.getElementById('r2-filter-mine-toggle').checked = false; document.getElementById('r2-search-model-select').value = ''; document.getElementById('r2-search-text-input').value = ''; loadR2Gallery(); } });
+        
+        // ★ MODIFIED: Event listener for custom players, delete, and user file buttons
+        document.getElementById('r2-gallery-container').addEventListener('click', async (e) => {
+            const card = e.target.closest('.player-card');
+            if (!card) return;
+
+            // Custom Player Logic
+            const playBtn = e.target.closest('.play-pause-btn');
+            const progressWrapper = e.target.closest('.progress-wrapper');
+            if (playBtn || progressWrapper) {
+                const audio = card.querySelector('audio');
+                if (playBtn) {
+                    if (audio.paused) { audio.play(); } else { audio.pause(); }
+                }
+                if (progressWrapper && audio.duration) {
+                    const rect = progressWrapper.getBoundingClientRect();
+                    const clickX = e.clientX - rect.left;
+                    const width = rect.width;
+                    const duration = audio.duration;
+                    audio.currentTime = (clickX / width) * duration;
+                }
+                return; // Prevent other actions
+            }
+
+            // Delete Button Logic
+            const deleteButton = e.target.closest('.btn-delete-r2');
+            if (deleteButton) {
+                const fileKey = card.dataset.fileKey;
+                const isTestPost = deleteButton.dataset.isTestPost === 'true';
+                if (isTestPost) { if (confirm(`このテスト投稿をブラウザから削除しますか？`)) { try { const audioEl = card.querySelector('audio'); if (audioEl && audioEl.src.startsWith('blob:')) { URL.revokeObjectURL(audioEl.src); } await deleteTestPost(fileKey); card.remove(); } catch(dbError) { alert(`削除に失敗しました: ${dbError.message}`); } } }
+                else { const downloadLink = card.querySelector('.download-link'); const filename = downloadLink ? downloadLink.download : fileKey; if (confirm(`ファイル「${filename}」を完全に削除しますか？この操作は元に戻せません。`)) { try { deleteButton.disabled = true; const response = await fetch(`/api/delete/${encodeURIComponent(fileKey)}`, { method: 'DELETE' }); if (!response.ok) throw new Error((await response.json()).error || '削除に失敗しました'); loadR2Gallery(); } catch(error) { alert(error.message); deleteButton.disabled = false; } } }
+                return;
+            }
+            
+            // View User Files Logic
+            const viewUserBtn = e.target.closest('.btn-view-user-files');
+            if (viewUserBtn) {
+                r2GalleryState.userId = card.dataset.userId; r2GalleryState.currentPage = 1; r2GalleryState.filter = ''; r2GalleryState.modelId = ''; r2GalleryState.searchText = ''; document.getElementById('r2-filter-mine-toggle').checked = false; document.getElementById('r2-search-model-select').value = ''; document.getElementById('r2-search-text-input').value = ''; loadR2Gallery();
+            }
+        });
     }
 
     // --- Initialization Trigger ---
