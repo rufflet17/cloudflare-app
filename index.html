@@ -348,6 +348,7 @@
     let panStart = { touchX: 0, touchY: 0, pixelX: 0, pixelY: 0 };
     let animationFrameId = null;
     const audioContextForDecoding = new (window.AudioContext || window.webkitAudioContext)();
+    const R2_ITEMS_PER_PAGE = 50;
     let r2GalleryState = { currentPage: 1, filter: 'all', modelId: '', searchText: '', userId: '', isLoading: false, hasNextPage: false };
     let auth; // Firebase Auth instance
     
@@ -947,7 +948,11 @@
         updateR2FilterStatusUI(); // ユーザー名なしで一旦表示
 
         try {
-            const params = new URLSearchParams({ page: r2GalleryState.currentPage, filter: r2GalleryState.filter });
+            const params = new URLSearchParams({ 
+                page: r2GalleryState.currentPage, 
+                filter: r2GalleryState.filter,
+                limit: R2_ITEMS_PER_PAGE
+            });
             if (r2GalleryState.modelId) params.append('modelId', r2GalleryState.modelId);
             if (r2GalleryState.searchText) params.append('searchText', r2GalleryState.searchText);
             if (r2GalleryState.userId) params.append('userId', r2GalleryState.userId);
@@ -955,7 +960,7 @@
             const response = await fetch(`/api/list?${params.toString()}`);
             if (!response.ok) { const errData = await response.json().catch(() => ({error: 'サーバーエラー'})); throw new Error(errData.error || '一覧の取得に失敗しました。'); }
             const filesFromServer = await response.json(); 
-            r2GalleryState.hasNextPage = filesFromServer.length === 10;
+            r2GalleryState.hasNextPage = filesFromServer.length === R2_ITEMS_PER_PAGE;
             
             let allTestPosts = await getAllTestPosts();
 
@@ -976,8 +981,7 @@
                 updateR2FilterStatusUI(filteredUsername);
             }
             
-            const filesToDisplay = combinedFiles.slice(0, 10);
-            renderR2Gallery(filesToDisplay);
+            renderR2Gallery(combinedFiles);
 
         } catch (error) { console.error('R2 gallery load error:', error); r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`; r2GalleryState.hasNextPage = false;
         } finally { r2GalleryState.isLoading = false; updateR2PaginationUI(); }
