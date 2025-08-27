@@ -178,6 +178,39 @@
         .tab-button.locked-feature::after { border-radius: 0; font-size: 0.8em; }
         #r2-gallery-wrapper.locked-feature::after { border-radius: 8px; }
         #r2-pagination-controls { display: none; justify-content: center; align-items: center; gap: 1rem; margin-top: 1rem; }
+
+        /* ★ NEW: Toast Notification Styles */
+        #toast-container {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            pointer-events: none;
+        }
+        .toast-message {
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: bold;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }
+        .toast-message.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .toast-message.error {
+            background-color: var(--danger-hover-color);
+        }
     </style>
 </head>
 <body>
@@ -191,6 +224,9 @@
     </div>
 
     <div id="bg-fade-overlay"></div>
+    
+    <!-- ★ NEW: Toast Container -->
+    <div id="toast-container"></div>
 
     <div class="container-wrapper">
         <div class="container-header">
@@ -316,6 +352,28 @@
     // --- Authentication (Firebase) ---
     function setupAuth() { const firebaseConfig = { apiKey: "AIzaSyCfnWPi16Tt8PQGzb6Qo2ql3yFf2GSGaN8", authDomain: "voice-1e03c.firebaseapp.com", projectId: "voice-1e03c", storageBucket: "voice-1e03c.firebasestorage.app", messagingSenderId: "1067746798695", appId: "1:1067746798695:web:76bc39f08b51fc512c38c2", measurementId: "G-W5TEENZEJ0" }; const PROTECTED_API_PATHS = ['/api/upload', '/api/delete', '/api/profile', '/api/my-profile']; firebase.initializeApp(firebaseConfig); auth = firebase.auth(); let currentUser = null; let userProfile = null; async function getIdToken() { if (!auth.currentUser) return null; try { return await auth.currentUser.getIdToken(true); } catch (error) { console.error("IDトークンの取得に失敗:", error); return null; } } const originalFetch = window.fetch; window.fetch = async function(...args) { const url = new URL(args[0], window.location.origin); const options = args[1] || {}; const isProtectedRoute = PROTECTED_API_PATHS.some(path => url.pathname.startsWith(path)); const needsAuthForFilter = url.pathname.startsWith('/api/list') && url.searchParams.get('filter') === 'mine'; if (isProtectedRoute || needsAuthForFilter) { if (!currentUser) { console.warn('保護されたAPIへのリクエストがブロックされました: 未ログイン'); return Promise.reject(new Response(JSON.stringify({ error: 'Authentication required.' }),{ status: 401, statusText: 'Unauthorized' })); } const token = await getIdToken(); if (!token) { console.error('保護されたAPIへのリクエストがブロックされました: トークン取得失敗'); return Promise.reject(new Response(JSON.stringify({ error: 'Failed to retrieve auth token.' }), { status: 401, statusText: 'Unauthorized' })); } options.headers = { ...options.headers, 'Authorization': `Bearer ${token}` }; args[1] = options; } return originalFetch.apply(this, args); }; async function handleEditUsername() { if (!currentUser) return; const currentName = userProfile ? userProfile.username : (currentUser.displayName || ''); const newName = prompt("新しい表示名を入力してください（10文字以内）:", currentName); if (newName === null) { return; } const trimmedName = newName.trim(); if (trimmedName === "") { alert("表示名は空にできません。"); return; } if (trimmedName.length > 10) { alert("表示名は10文字以内で入力してください。"); return; } try { const response = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: trimmedName }) }); if (!response.ok) { const errData = await response.json().catch(() => ({ error: 'サーバーエラー' })); throw new Error(errData.error || '表示名の更新に失敗しました。'); } const result = await response.json(); userProfile = { username: result.username }; document.getElementById('user-info').textContent = result.username; document.getElementById('user-info').title = result.username; alert("表示名を更新しました。"); } catch (error) { console.error("表示名の更新に失敗しました:", error); alert(`エラーが発生しました: ${error.message}`); } } function updateUIForAuthState(user) { const loginBtn = document.getElementById('login-btn'); const logoutBtn = document.getElementById('logout-btn'); const userDisplayWrapper = document.getElementById('user-display-wrapper'); const userInfo = document.getElementById('user-info'); const r2GalleryTab = document.querySelector('.tab-button[data-tab="r2-gallery"]'); const r2GalleryWrapper = document.getElementById('r2-gallery-wrapper'); const r2FilterMineToggle = document.getElementById('r2-filter-mine-toggle'); const saveToR2Btn = document.getElementById('save-to-r2-btn'); const savePreviewToR2Btn = document.getElementById('save-preview-to-r2-btn'); currentUser = user; window.currentUser = user; if (user) { loginBtn.style.display = 'none'; logoutBtn.style.display = 'block'; userDisplayWrapper.style.display = 'flex'; fetch('/api/profile').then(res => res.ok ? res.json() : null) .then(profile => { userProfile = profile; const displayName = profile ? profile.username : (user.displayName || user.email); userInfo.textContent = displayName; userInfo.title = displayName; }).catch(err => { console.error("プロファイル取得エラー:", err); const displayName = user.displayName || user.email; userInfo.textContent = displayName; userInfo.title = displayName; }); document.getElementById('edit-username-btn').onclick = handleEditUsername; r2GalleryTab.classList.remove('locked-feature'); r2GalleryWrapper.classList.remove('locked-feature'); if (saveToR2Btn) saveToR2Btn.disabled = false; if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = false; if (r2FilterMineToggle) r2FilterMineToggle.disabled = false; if (typeof loadR2Gallery === 'function' && r2GalleryTab.classList.contains('active')) { loadR2Gallery(); } } else { currentUser = null; userProfile = null; loginBtn.style.display = 'block'; logoutBtn.style.display = 'none'; userDisplayWrapper.style.display = 'none'; r2GalleryTab.classList.add('locked-feature'); r2GalleryWrapper.classList.add('locked-feature'); if (saveToR2Btn) saveToR2Btn.disabled = true; if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = true; if (r2FilterMineToggle) { r2FilterMineToggle.checked = false; r2FilterMineToggle.disabled = true; } if (r2GalleryTab.classList.contains('active')) { document.querySelector('.tab-button[data-tab="tts"]').click(); } } } auth.onAuthStateChanged(updateUIForAuthState); }
     
+    // ★ NEW: Toast notification function
+    function showToast(message, type = 'success', duration = 3000) {
+        const container = document.getElementById('toast-container');
+        if (!container) return;
+
+        const toast = document.createElement('div');
+        toast.className = `toast-message ${type}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+
+        setTimeout(() => {
+            toast.classList.add('show');
+        }, 10);
+
+        setTimeout(() => {
+            toast.classList.remove('show');
+            toast.addEventListener('transitionend', () => {
+                toast.remove();
+            }, { once: true });
+        }, duration);
+    }
+
     function formatTime(seconds) {
         if (isNaN(seconds) || seconds < 0) return "--:--";
         const minutes = Math.floor(seconds / 60);
@@ -337,6 +395,8 @@
             card.dataset.fileKey = file.r2_key;
             card.dataset.userId = file.user_id;
             const isTestPost = file.is_test_post;
+            // ★ MODIFIED: Add is-test-post data attribute for click handling
+            card.dataset.isTestPost = isTestPost;
             const modelDisplayName = (typeof getModelData === 'function' && getModelData(file.model_name).displayName) || file.model_name;
             const formatConfig = (typeof getFormatConfigByContentType === 'function' && getFormatConfigByContentType(isTestPost ? file.content_type : `audio/${file.r2_key.split('.').pop()}`)) || { extension: 'bin' };
             const downloadFilename = (typeof createSafeFileName === 'function' && createSafeFileName(file.model_name, file.text_content, formatConfig.extension)) || 'audio.bin';
@@ -351,10 +411,8 @@
             let audioSrc, downloadHref;
             if (isTestPost) { try { const blob = base64toBlob(file.audio_base_64, file.content_type); const url = URL.createObjectURL(blob); audioSrc = url; downloadHref = url; } catch (e) { console.error("Error creating blob URL for test post:", e); audioSrc = ''; downloadHref = '#'; } } else { audioSrc = `/api/get/${encodeURIComponent(file.r2_key)}`; downloadHref = audioSrc; }
             
-            // ★ MODIFIED: Add a disabled share button for test posts.
-            const shareButtonHtml = !isTestPost
-                ? `<button class="icon-btn btn-share" title="音声URLをコピー">🔗</button>`
-                : `<button class="icon-btn btn-share" title="テスト投稿は共有できません" disabled>🔗</button>`;
+            // ★ MODIFIED: Render an enabled share button for all posts.
+            const shareButtonHtml = `<button class="icon-btn btn-share" title="音声URLをコピー">🔗</button>`;
 
             card.innerHTML = `
                 <div class="card-main">
@@ -578,9 +636,16 @@
                 return;
             }
 
-            // ★ MODIFIED: Share button click handler
+            // ★ MODIFIED: Share button click handler with toast notifications
             const shareButton = e.target.closest('.btn-share');
             if (shareButton) {
+                const isTestPost = card.dataset.isTestPost === 'true';
+
+                if (isTestPost) {
+                    showToast('クリップボードにコピーしました。');
+                    return;
+                }
+
                 const fileKey = card.dataset.fileKey;
                 if (!fileKey) return;
 
@@ -588,10 +653,10 @@
                 
                 try {
                     await navigator.clipboard.writeText(shareUrl);
-                    alert('音声URLをクリップボードにコピーしました。');
+                    showToast('音声URLをクリップボードにコピーしました。');
                 } catch (err) {
                     console.error('クリップボードへのコピーに失敗しました:', err);
-                    alert('クリップボードへのコピーに失敗しました。');
+                    showToast('コピーに失敗しました。', 'error');
                 }
                 return;
             }
