@@ -147,7 +147,6 @@ async function handleOtherApiRoutes(context) {
     const method = request.method;
 
     if (path === '/api/list' && method === 'GET') {
-        // ★ MODIFIED: /api/list もキャッシュ対応にする
         return handleListForFilter(context);
     }
 
@@ -301,8 +300,6 @@ async function handleNumberedChunk({ env }, page) {
     }
 }
 
-
-// ★ NEW: /api/list の実処理を分離
 async function fetchFilteredList(context) {
     const { request, env } = context;
     let decodedToken = null;
@@ -322,14 +319,12 @@ async function fetchFilteredList(context) {
         const filter = params.get('filter');
         const modelId = params.get('modelId');
         const searchText = params.get('searchText');
-        // ★ MODIFIED: 他ユーザー表示機能を復活
         const userId = params.get('userId');
         const offset = (page - 1) * limit;
 
         let conditions = ["a.is_deleted = 0"];
         let bindings = [];
 
-        // ★ MODIFIED: 他ユーザー表示機能を復活
         if (userId) { conditions.push("a.user_id = ?"); bindings.push(userId); }
         else if (filter === 'mine') { conditions.push("a.user_id = ?"); bindings.push(decodedToken.sub); }
         if (modelId) { conditions.push("a.model_name = ?"); bindings.push(modelId); }
@@ -350,7 +345,6 @@ async function fetchFilteredList(context) {
     }
 }
 
-// ★ MODIFIED: /api/list もキャッシュ対応
 async function handleListForFilter(context) {
     const cache = caches.default;
     const { request } = context;
@@ -359,7 +353,7 @@ async function handleListForFilter(context) {
 
     if (!response) {
         console.log(`Cache miss for filtered list: ${request.url}`);
-        response = await fetchFilteredList(context); // 実処理を呼び出し
+        response = await fetchFilteredList(context); 
         if (response.ok) {
             response.headers.set('Cache-Control', 'public, s-maxage=604800'); // 7日間キャッシュ
             context.waitUntil(cache.put(cacheKey, response.clone()));
@@ -370,9 +364,8 @@ async function handleListForFilter(context) {
     return response;
 }
 
-
-// ★ NEW: キャッシュを削除するヘルパー関数
-async function purgeCaches(context, { modelId, userId }) {
+// ★ MODIFIED: キャッシュ削除ヘルパー関数を拡張
+async function purgeCaches(context, { modelId, userId, r2Key }) {
     const { request } = context;
     const cache = caches.default;
     const origin = new URL(request.url).origin;
@@ -385,7 +378,7 @@ async function purgeCaches(context, { modelId, userId }) {
         const modelUrl = new URL(`${origin}/api/list`);
         modelUrl.searchParams.set('modelId', modelId);
         modelUrl.searchParams.set('page', '1');
-        modelUrl.searchParams.set('limit', '50'); // フロントエンドのクエリに合わせる
+        modelUrl.searchParams.set('limit', '50');
         urlsToPurge.push(modelUrl.toString());
     }
     
@@ -396,9 +389,15 @@ async function purgeCaches(context, { modelId, userId }) {
          userUrl.searchParams.set('limit', '50');
          urlsToPurge.push(userUrl.toString());
     }
+
+    // ★ ADDED: 個別の音声ファイルURLをパージ対象に追加
+    if (r2Key) {
+        const audioUrl = `${origin}/api/get/${encodeURIComponent(r2Key)}`;
+        urlsToPurge.push(audioUrl);
+    }
     
     console.log("Purging URLs:", urlsToPurge);
-    const purgePromises = urlsToPurge.map(url => cache.delete(new Request(url), { ignoreMethod: true }));
+    const purgePromises = urlsToPurge.map(url => cache.delete(new Request(url), { ignoreMethod: true, ignoreSearch: true }));
     
     try {
         await Promise.all(purgePromises);
@@ -442,16 +441,16 @@ async function handleUpload(request, env, decodedToken, context) {
         ];
         await env.MY_D1_DATABASE.batch(batch);
 
-        // ★ MODIFIED: 関連するキャッシュをすべて削除
         context.waitUntil(purgeCaches(context, { modelId: modelId, userId: user.uid }));
 
-        return new Response(JSON.stringify({ success: true, key: r2Key }), { status: 200, headers: { 'Content-Type': 'application/json' }});
+        return new Response(JSON.stringify({ success: true, r2_key: r2Key }), { status: 200, headers: { 'Content-Type': 'application/json' }});
     } catch (error) {
         console.error("Upload failed:", error);
         return new Response(JSON.stringify({ error: "Upload failed." }), { status: 500 });
     }
 }
 
+// ★ MODIFIED: CDNキャッシュ設定を強化
 async function handleGet(request, env, key) {
     try {
         const stmt = env.MY_D1_DATABASE.prepare("SELECT id FROM audios WHERE r2_key = ? AND is_deleted = 0");
@@ -464,7 +463,8 @@ async function handleGet(request, env, key) {
         const headers = new Headers();
         object.writeHttpMetadata(headers);
         headers.set("etag", object.httpEtag);
-        headers.set('Cache-Control', 'public, max-age=31536000');
+        // s-maxage: CDNキャッシュ期間 / max-age: ブラウザキャッシュ期間 (両方1年)
+        headers.set('Cache-Control', 'public, s-maxage=31536000, max-age=31536000');
         return new Response(object.body, { headers });
     } catch (error) {
         console.error("Get failed:", error);
@@ -472,8 +472,8 @@ async function handleGet(request, env, key) {
     }
 }
 
+// ★ MODIFIED: 削除時に音声ファイルのCDNキャッシュもパージ
 async function handleLogicalDelete(request, env, decodedToken, key, context) {
-    // 削除機能は現在フロントエンドから無効化されているが、バックエンドロジックは残しておく
     if (!decodedToken || !decodedToken.sub) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
     const user = { uid: decodedToken.sub };
 
@@ -491,8 +491,12 @@ async function handleLogicalDelete(request, env, decodedToken, key, context) {
         const updateResult = results[0];
         if (updateResult.meta.changes === 0) return new Response(JSON.stringify({ error: "File not found or access denied during transaction." }), { status: 404 });
 
-        // ★ MODIFIED: 削除時も関連キャッシュを削除
-        context.waitUntil(purgeCaches(context, { modelId: audioInfo.model_name, userId: audioInfo.user_id }));
+        // 音声ファイル自体のキャッシュもパージ対象に含める
+        context.waitUntil(purgeCaches(context, { 
+            modelId: audioInfo.model_name, 
+            userId: audioInfo.user_id, 
+            r2Key: key 
+        }));
 
         return new Response(JSON.stringify({ success: true, key: key }), { status: 200, headers: { 'Content-Type': 'application/json' }});
     } catch (error) {
