@@ -76,17 +76,104 @@
         .btn-delete:hover, .btn-delete-r2:hover { color: var(--danger-color); border-color: var(--danger-color); }
         .btn-view-user-files:hover { color: var(--info-color); border-color: var(--info-color); }
         
-        /* ★ MODIFIED: Custom Audio Player Styles with SVG support */
-        .custom-audio-player { display: flex; align-items: center; gap: 10px; height: 32px; width: 100%; }
-        .play-pause-btn { background-color: var(--primary-color); color: white; border-radius: 50%; width: 32px; height: 32px; padding: 0; display: flex; justify-content: center; align-items: center; flex-shrink: 0; transition: background-color 0.2s; border: none; }
-        .play-pause-btn:hover { background-color: var(--primary-hover-color); }
-        .play-pause-btn.playing { background-color: var(--secondary-color); }
-        .play-pause-btn.playing:hover { background-color: var(--secondary-hover-color); }
-        .play-pause-btn svg { width: 14px; height: 14px; fill: currentColor; }
-        .play-icon { transform: translateX(1px); }
-        .progress-wrapper { flex-grow: 1; height: 6px; background-color: #e0e0e0; border-radius: 3px; cursor: pointer; position: relative; }
-        .progress-bar { height: 100%; width: 0%; background-color: var(--primary-color); border-radius: 3px; }
-        .time-display { font-size: 0.8em; color: #666; min-width: 75px; text-align: right; user-select: none; }
+        /* --- Modern Audio Player Styles --- */
+        .custom-audio-player {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            height: 48px;
+            width: 100%;
+            padding: 0 12px;
+            background-color: #f0f2f5;
+            border-radius: 24px; /* Fully rounded corners */
+            box-sizing: border-box;
+            transition: background-color 0.2s;
+        }
+        .custom-audio-player:hover {
+            background-color: #e5e7eb;
+        }
+        .play-pause-btn {
+            background-color: var(--primary-color);
+            color: white;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-shrink: 0;
+            transition: background-color 0.2s, transform 0.15s ease-out;
+            border: none;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .play-pause-btn:hover {
+            background-color: var(--primary-hover-color);
+            transform: scale(1.05);
+        }
+        .play-pause-btn.playing {
+            background-color: var(--secondary-color);
+        }
+        .play-pause-btn.playing:hover {
+            background-color: var(--secondary-hover-color);
+        }
+        .play-pause-btn svg {
+            width: 16px;
+            height: 16px;
+            fill: currentColor;
+        }
+        .play-icon {
+            transform: translateX(1.5px);
+        }
+        .progress-wrapper {
+            flex-grow: 1;
+            height: 6px;
+            background-color: #d1d5db;
+            border-radius: 3px;
+            cursor: pointer;
+            position: relative;
+            transition: height 0.2s ease-in-out;
+        }
+        .progress-wrapper:hover {
+            height: 8px;
+        }
+        .progress-bar {
+            height: 100%;
+            width: 0%;
+            background-color: var(--primary-color);
+            border-radius: 3px;
+            position: relative;
+        }
+        /* Thumb for the progress bar */
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            right: -6px;
+            top: 50%;
+            transform: translateY(-50%) scale(0);
+            width: 12px;
+            height: 12px;
+            background-color: var(--primary-color);
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 4px rgba(0,0,0,0.2);
+            opacity: 0;
+            transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out;
+        }
+        /* Show thumb on player hover */
+        .custom-audio-player:hover .progress-bar::after {
+            opacity: 1;
+            transform: translateY(-50%) scale(1);
+        }
+        .time-display {
+            font-size: 0.8em;
+            font-family: 'SF Mono', Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            color: #4b5563;
+            min-width: 80px;
+            text-align: right;
+            user-select: none;
+            font-weight: 500;
+        }
 
         .card-status { font-size: 0.9em; font-weight: bold; min-height: 1.2em; color: var(--primary-color); }
         .card-text-wrapper { display: flex; align-items: baseline; gap: 8px; }
@@ -296,7 +383,7 @@
     // --- Authentication (Firebase) ---
     function setupAuth() { const firebaseConfig = { apiKey: "AIzaSyCfnWPi16Tt8PQGzb6Qo2ql3yFf2GSGaN8", authDomain: "voice-1e03c.firebaseapp.com", projectId: "voice-1e03c", storageBucket: "voice-1e03c.firebasestorage.app", messagingSenderId: "1067746798695", appId: "1:1067746798695:web:76bc39f08b51fc512c38c2", measurementId: "G-W5TEENZEJ0" }; const PROTECTED_API_PATHS = ['/api/upload', '/api/delete', '/api/profile', '/api/my-profile']; firebase.initializeApp(firebaseConfig); auth = firebase.auth(); let currentUser = null; let userProfile = null; async function getIdToken() { if (!auth.currentUser) return null; try { return await auth.currentUser.getIdToken(true); } catch (error) { console.error("IDトークンの取得に失敗:", error); return null; } } const originalFetch = window.fetch; window.fetch = async function(...args) { const url = new URL(args[0], window.location.origin); const options = args[1] || {}; const isProtectedRoute = PROTECTED_API_PATHS.some(path => url.pathname.startsWith(path)); const needsAuthForFilter = url.pathname.startsWith('/api/list') && url.searchParams.get('filter') === 'mine'; if (isProtectedRoute || needsAuthForFilter) { if (!currentUser) { console.warn('保護されたAPIへのリクエストがブロックされました: 未ログイン'); return Promise.reject(new Response(JSON.stringify({ error: 'Authentication required.' }),{ status: 401, statusText: 'Unauthorized' })); } const token = await getIdToken(); if (!token) { console.error('保護されたAPIへのリクエストがブロックされました: トークン取得失敗'); return Promise.reject(new Response(JSON.stringify({ error: 'Failed to retrieve auth token.' }), { status: 401, statusText: 'Unauthorized' })); } options.headers = { ...options.headers, 'Authorization': `Bearer ${token}` }; args[1] = options; } return originalFetch.apply(this, args); }; async function handleEditUsername() { if (!currentUser) return; const currentName = userProfile ? userProfile.username : (currentUser.displayName || ''); const newName = prompt("新しい表示名を入力してください（10文字以内）:", currentName); if (newName === null) { return; } const trimmedName = newName.trim(); if (trimmedName === "") { alert("表示名は空にできません。"); return; } if (trimmedName.length > 10) { alert("表示名は10文字以内で入力してください。"); return; } try { const response = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: trimmedName }) }); if (!response.ok) { const errData = await response.json().catch(() => ({ error: 'サーバーエラー' })); throw new Error(errData.error || '表示名の更新に失敗しました。'); } const result = await response.json(); userProfile = { username: result.username }; document.getElementById('user-info').textContent = result.username; document.getElementById('user-info').title = result.username; alert("表示名を更新しました。"); } catch (error) { console.error("表示名の更新に失敗しました:", error); alert(`エラーが発生しました: ${error.message}`); } } function updateUIForAuthState(user) { const loginBtn = document.getElementById('login-btn'); const logoutBtn = document.getElementById('logout-btn'); const userDisplayWrapper = document.getElementById('user-display-wrapper'); const userInfo = document.getElementById('user-info'); const r2GalleryTab = document.querySelector('.tab-button[data-tab="r2-gallery"]'); const r2GalleryWrapper = document.getElementById('r2-gallery-wrapper'); const r2FilterMineToggle = document.getElementById('r2-filter-mine-toggle'); const saveToR2Btn = document.getElementById('save-to-r2-btn'); const savePreviewToR2Btn = document.getElementById('save-preview-to-r2-btn'); currentUser = user; window.currentUser = user; if (user) { loginBtn.style.display = 'none'; logoutBtn.style.display = 'block'; userDisplayWrapper.style.display = 'flex'; fetch('/api/profile').then(res => res.ok ? res.json() : null) .then(profile => { userProfile = profile; const displayName = profile ? profile.username : (user.displayName || user.email); userInfo.textContent = displayName; userInfo.title = displayName; }).catch(err => { console.error("プロファイル取得エラー:", err); const displayName = user.displayName || user.email; userInfo.textContent = displayName; userInfo.title = displayName; }); document.getElementById('edit-username-btn').onclick = handleEditUsername; r2GalleryTab.classList.remove('locked-feature'); r2GalleryWrapper.classList.remove('locked-feature'); if (saveToR2Btn) saveToR2Btn.disabled = false; if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = false; if (r2FilterMineToggle) r2FilterMineToggle.disabled = false; if (typeof loadR2Gallery === 'function' && r2GalleryTab.classList.contains('active')) { loadR2Gallery(); } } else { currentUser = null; userProfile = null; loginBtn.style.display = 'block'; logoutBtn.style.display = 'none'; userDisplayWrapper.style.display = 'none'; r2GalleryTab.classList.add('locked-feature'); r2GalleryWrapper.classList.add('locked-feature'); if (saveToR2Btn) saveToR2Btn.disabled = true; if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = true; if (r2FilterMineToggle) { r2FilterMineToggle.checked = false; r2FilterMineToggle.disabled = true; } if (r2GalleryTab.classList.contains('active')) { document.querySelector('.tab-button[data-tab="tts"]').click(); } } } auth.onAuthStateChanged(updateUIForAuthState); }
     
-    // ★ NEW: Helper function to format time
+    // Helper function to format time
     function formatTime(seconds) {
         if (isNaN(seconds) || seconds < 0) return "--:--";
         const minutes = Math.floor(seconds / 60);
