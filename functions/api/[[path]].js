@@ -179,11 +179,14 @@ async function handleOtherApiRoutes(context) {
     if (path === '/api/upload' && method === 'POST') {
         return handleUpload(request, env, decodedToken, context);
     }
+    // ★ MODIFIED: 削除機能を無効化するため、ルートハンドラをコメントアウト
+    /*
     const deleteMatch = path.match(/^\/api\/delete\/(.+)$/);
     if (deleteMatch && method === 'DELETE') {
         const key = decodeURIComponent(deleteMatch[1]);
         return handleLogicalDelete(request, env, decodedToken, key, context);
     }
+    */
     const getMatch = path.match(/^\/api\/get\/(.+)$/);
     if (getMatch && method === 'GET') {
         const key = decodeURIComponent(getMatch[1]);
@@ -257,10 +260,13 @@ async function handleLatestChunk({ env }) {
         const limit = 50;
         const itemsInLatestChunk = (totalAudios % limit) || (totalAudios > 0 ? limit : 0);
         const latestChunkNumber = Math.ceil(totalAudios / limit) || 1;
+        
+        // ★ MODIFIED: user_profilesとのJOINをやめ、audiosテーブルから直接usernameを取得
         const query = `
-            SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username
-            FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
-            WHERE a.is_deleted = 0 ORDER BY a.created_at DESC LIMIT ?`;
+            SELECT r2_key, user_id, model_name, text_content, username, created_at
+            FROM audios
+            WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT ?`;
+
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(itemsInLatestChunk).all();
         const payload = {
             metadata: { totalAudios, latestChunkNumber, itemsInChunk: results.length },
@@ -286,10 +292,13 @@ async function handleNumberedChunk({ env }, page) {
         }
         const itemsInLatestChunk = (totalAudios % limit) || (totalAudios > 0 ? limit : 0);
         const offset = itemsInLatestChunk + (latestChunkNumber - page - 1) * limit;
+
+        // ★ MODIFIED: user_profilesとのJOINをやめ、audiosテーブルから直接usernameを取得
         const query = `
-            SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username
-            FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
-            WHERE a.is_deleted = 0 ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
+            SELECT r2_key, user_id, model_name, text_content, username, created_at
+            FROM audios
+            WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+            
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(limit, offset).all();
         const response = new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' } });
         response.headers.set('Cache-Control', 'public, s-maxage=31536000'); // 1年
@@ -319,21 +328,25 @@ async function handleListForFilter(context) {
         const filter = params.get('filter');
         const modelId = params.get('modelId');
         const searchText = params.get('searchText');
-        const userId = params.get('userId');
+        // ★ MODIFIED: 他ユーザーの投稿表示機能を無効化するため、userIdパラメータを扱わない
+        // const userId = params.get('userId');
         const offset = (page - 1) * limit;
 
         let conditions = ["a.is_deleted = 0"];
         let bindings = [];
 
-        if (userId) { conditions.push("a.user_id = ?"); bindings.push(userId); }
-        else if (filter === 'mine') { conditions.push("a.user_id = ?"); bindings.push(decodedToken.sub); }
+        // ★ MODIFIED: 他ユーザーの投稿表示機能を無効化
+        // if (userId) { conditions.push("a.user_id = ?"); bindings.push(userId); }
+        if (filter === 'mine') { conditions.push("a.user_id = ?"); bindings.push(decodedToken.sub); }
         if (modelId) { conditions.push("a.model_name = ?"); bindings.push(modelId); }
         if (searchText) { conditions.push("a.text_content LIKE ?"); bindings.push(`%${searchText}%`); }
 
         const whereClause = `WHERE ${conditions.join(' AND ')}`;
+        
+        // ★ MODIFIED: user_profilesとのJOINをやめ、audiosテーブルから直接usernameを取得
         const query = `
-            SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, p.username
-            FROM audios AS a LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
+            SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.username, a.created_at
+            FROM audios AS a
             ${whereClause} ORDER BY a.created_at DESC LIMIT ? OFFSET ?`;
         bindings.push(limit, offset);
 
@@ -358,8 +371,12 @@ async function handleUpload(request, env, decodedToken, context) {
             if (userStatus.is_muted === 1) return new Response(JSON.stringify({ error: "ミュート状態のため、この音声はテスト投稿として保存されます。", reason: "muted" }), { status: 403 });
         }
 
-        const { modelId, text, audioBase64, contentType } = reqBody;
-        if (!modelId || !text || !audioBase64 || !contentType) return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400 });
+        // ★ MODIFIED: リクエストボディからusernameを受け取る
+        const { modelId, text, username, audioBase64, contentType } = reqBody;
+        // ★ MODIFIED: usernameのバリデーションを追加
+        if (!modelId || !text || !username || typeof username !== 'string' || username.length > 20 || !audioBase64 || !contentType) {
+            return new Response(JSON.stringify({ error: "Missing or invalid required fields" }), { status: 400 });
+        }
         
         const audioData = atob(audioBase64);
         const arrayBuffer = new Uint8Array(audioData.length);
@@ -371,8 +388,9 @@ async function handleUpload(request, env, decodedToken, context) {
         const d1Key = crypto.randomUUID();
         const createdAt = new Date().toISOString();
         
+        // ★ MODIFIED: INSERT文にusernameを追加し、bindする
         const batch = [
-            env.MY_D1_DATABASE.prepare(`INSERT INTO audios (id, r2_key, user_id, model_name, text_content, created_at, is_deleted) VALUES (?, ?, ?, ?, ?, ?, 0)`).bind(d1Key, r2Key, user.uid, modelId, text, createdAt),
+            env.MY_D1_DATABASE.prepare(`INSERT INTO audios (id, r2_key, user_id, model_name, text_content, username, created_at, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)`).bind(d1Key, r2Key, user.uid, modelId, text, username, createdAt),
             env.MY_D1_DATABASE.prepare(`UPDATE counters SET value = value + 1 WHERE name = 'total_audios'`)
         ];
         await env.MY_D1_DATABASE.batch(batch);
@@ -409,7 +427,11 @@ async function handleGet(request, env, key) {
     }
 }
 
+// ★ MODIFIED: 削除機能を無効化するため、関数の内容をコメントアウトし、エラーを返すように変更
 async function handleLogicalDelete(request, env, decodedToken, key, context) {
+    return new Response(JSON.stringify({ error: "This feature is currently disabled." }), { status: 405 });
+    /*
+    // 機能を復活させる場合のコード
     if (!decodedToken || !decodedToken.sub) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
     const user = { uid: decodedToken.sub };
 
@@ -437,6 +459,7 @@ async function handleLogicalDelete(request, env, decodedToken, key, context) {
         console.error("Logical delete failed:", error);
         return new Response(JSON.stringify({ error: "Failed to delete audio file." }), { status: 500 });
     }
+    */
 }
 
 async function handleProfile(request, env, decodedToken) {
