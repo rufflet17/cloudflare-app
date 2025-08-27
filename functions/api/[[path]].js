@@ -147,6 +147,7 @@ async function handleOtherApiRoutes(context) {
     const method = request.method;
 
     if (path === '/api/list' && method === 'GET') {
+        // ★ MODIFIED: /api/list もキャッシュ対応にする
         return handleListForFilter(context);
     }
 
@@ -179,14 +180,11 @@ async function handleOtherApiRoutes(context) {
     if (path === '/api/upload' && method === 'POST') {
         return handleUpload(request, env, decodedToken, context);
     }
-    // ★ MODIFIED: 削除機能を無効化するため、ルートハンドラをコメントアウト
-    /*
     const deleteMatch = path.match(/^\/api\/delete\/(.+)$/);
     if (deleteMatch && method === 'DELETE') {
         const key = decodeURIComponent(deleteMatch[1]);
         return handleLogicalDelete(request, env, decodedToken, key, context);
     }
-    */
     const getMatch = path.match(/^\/api\/get\/(.+)$/);
     if (getMatch && method === 'GET') {
         const key = decodeURIComponent(getMatch[1]);
@@ -260,13 +258,10 @@ async function handleLatestChunk({ env }) {
         const limit = 50;
         const itemsInLatestChunk = (totalAudios % limit) || (totalAudios > 0 ? limit : 0);
         const latestChunkNumber = Math.ceil(totalAudios / limit) || 1;
-        
-        // ★ MODIFIED: user_profilesとのJOINをやめ、audiosテーブルから直接usernameを取得
         const query = `
             SELECT r2_key, user_id, model_name, text_content, username, created_at
             FROM audios
             WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT ?`;
-
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(itemsInLatestChunk).all();
         const payload = {
             metadata: { totalAudios, latestChunkNumber, itemsInChunk: results.length },
@@ -292,13 +287,10 @@ async function handleNumberedChunk({ env }, page) {
         }
         const itemsInLatestChunk = (totalAudios % limit) || (totalAudios > 0 ? limit : 0);
         const offset = itemsInLatestChunk + (latestChunkNumber - page - 1) * limit;
-
-        // ★ MODIFIED: user_profilesとのJOINをやめ、audiosテーブルから直接usernameを取得
         const query = `
             SELECT r2_key, user_id, model_name, text_content, username, created_at
             FROM audios
             WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT ? OFFSET ?`;
-            
         const { results } = await env.MY_D1_DATABASE.prepare(query).bind(limit, offset).all();
         const response = new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' } });
         response.headers.set('Cache-Control', 'public, s-maxage=31536000'); // 1年
@@ -309,7 +301,9 @@ async function handleNumberedChunk({ env }, page) {
     }
 }
 
-async function handleListForFilter(context) {
+
+// ★ NEW: /api/list の実処理を分離
+async function fetchFilteredList(context) {
     const { request, env } = context;
     let decodedToken = null;
     const url = new URL(request.url);
@@ -328,22 +322,20 @@ async function handleListForFilter(context) {
         const filter = params.get('filter');
         const modelId = params.get('modelId');
         const searchText = params.get('searchText');
-        // ★ MODIFIED: 他ユーザーの投稿表示機能を無効化するため、userIdパラメータを扱わない
-        // const userId = params.get('userId');
+        // ★ MODIFIED: 他ユーザー表示機能を復活
+        const userId = params.get('userId');
         const offset = (page - 1) * limit;
 
         let conditions = ["a.is_deleted = 0"];
         let bindings = [];
 
-        // ★ MODIFIED: 他ユーザーの投稿表示機能を無効化
-        // if (userId) { conditions.push("a.user_id = ?"); bindings.push(userId); }
-        if (filter === 'mine') { conditions.push("a.user_id = ?"); bindings.push(decodedToken.sub); }
+        // ★ MODIFIED: 他ユーザー表示機能を復活
+        if (userId) { conditions.push("a.user_id = ?"); bindings.push(userId); }
+        else if (filter === 'mine') { conditions.push("a.user_id = ?"); bindings.push(decodedToken.sub); }
         if (modelId) { conditions.push("a.model_name = ?"); bindings.push(modelId); }
         if (searchText) { conditions.push("a.text_content LIKE ?"); bindings.push(`%${searchText}%`); }
 
         const whereClause = `WHERE ${conditions.join(' AND ')}`;
-        
-        // ★ MODIFIED: user_profilesとのJOINをやめ、audiosテーブルから直接usernameを取得
         const query = `
             SELECT a.r2_key, a.user_id, a.model_name, a.text_content, a.username, a.created_at
             FROM audios AS a
@@ -355,6 +347,64 @@ async function handleListForFilter(context) {
     } catch (error) {
         console.error("List (for filter) failed:", error);
         return new Response(JSON.stringify({ error: "Failed to list filtered audio files." }), { status: 500 });
+    }
+}
+
+// ★ MODIFIED: /api/list もキャッシュ対応
+async function handleListForFilter(context) {
+    const cache = caches.default;
+    const { request } = context;
+    const cacheKey = new Request(request.url, request);
+    let response = await cache.match(cacheKey);
+
+    if (!response) {
+        console.log(`Cache miss for filtered list: ${request.url}`);
+        response = await fetchFilteredList(context); // 実処理を呼び出し
+        if (response.ok) {
+            response.headers.set('Cache-Control', 'public, s-maxage=604800'); // 7日間キャッシュ
+            context.waitUntil(cache.put(cacheKey, response.clone()));
+        }
+    } else {
+        console.log(`Cache hit for filtered list: ${request.url}`);
+    }
+    return response;
+}
+
+
+// ★ NEW: キャッシュを削除するヘルパー関数
+async function purgeCaches(context, { modelId, userId }) {
+    const { request } = context;
+    const cache = caches.default;
+    const origin = new URL(request.url).origin;
+
+    const urlsToPurge = [
+        `${origin}/api/chunk/latest`,
+    ];
+
+    if (modelId) {
+        const modelUrl = new URL(`${origin}/api/list`);
+        modelUrl.searchParams.set('modelId', modelId);
+        modelUrl.searchParams.set('page', '1');
+        modelUrl.searchParams.set('limit', '50'); // フロントエンドのクエリに合わせる
+        urlsToPurge.push(modelUrl.toString());
+    }
+    
+    if (userId) {
+         const userUrl = new URL(`${origin}/api/list`);
+         userUrl.searchParams.set('userId', userId);
+         userUrl.searchParams.set('page', '1');
+         userUrl.searchParams.set('limit', '50');
+         urlsToPurge.push(userUrl.toString());
+    }
+    
+    console.log("Purging URLs:", urlsToPurge);
+    const purgePromises = urlsToPurge.map(url => cache.delete(new Request(url), { ignoreMethod: true }));
+    
+    try {
+        await Promise.all(purgePromises);
+        console.log("Cache purging completed successfully.");
+    } catch (err) {
+        console.error("Cache purging failed:", err);
     }
 }
 
@@ -371,9 +421,7 @@ async function handleUpload(request, env, decodedToken, context) {
             if (userStatus.is_muted === 1) return new Response(JSON.stringify({ error: "ミュート状態のため、この音声はテスト投稿として保存されます。", reason: "muted" }), { status: 403 });
         }
 
-        // ★ MODIFIED: リクエストボディからusernameを受け取る
         const { modelId, text, username, audioBase64, contentType } = reqBody;
-        // ★ MODIFIED: usernameのバリデーションを追加
         if (!modelId || !text || !username || typeof username !== 'string' || username.length > 20 || !audioBase64 || !contentType) {
             return new Response(JSON.stringify({ error: "Missing or invalid required fields" }), { status: 400 });
         }
@@ -388,17 +436,14 @@ async function handleUpload(request, env, decodedToken, context) {
         const d1Key = crypto.randomUUID();
         const createdAt = new Date().toISOString();
         
-        // ★ MODIFIED: INSERT文にusernameを追加し、bindする
         const batch = [
             env.MY_D1_DATABASE.prepare(`INSERT INTO audios (id, r2_key, user_id, model_name, text_content, username, created_at, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)`).bind(d1Key, r2Key, user.uid, modelId, text, username, createdAt),
             env.MY_D1_DATABASE.prepare(`UPDATE counters SET value = value + 1 WHERE name = 'total_audios'`)
         ];
         await env.MY_D1_DATABASE.batch(batch);
 
-        const urlToPurge = new URL('/api/chunk/latest', request.url);
-        const req = new Request(urlToPurge.toString(), request);
-        context.waitUntil(caches.default.delete(req));
-        console.log("Purged cache for /api/chunk/latest");
+        // ★ MODIFIED: 関連するキャッシュをすべて削除
+        context.waitUntil(purgeCaches(context, { modelId: modelId, userId: user.uid }));
 
         return new Response(JSON.stringify({ success: true, key: r2Key }), { status: 200, headers: { 'Content-Type': 'application/json' }});
     } catch (error) {
@@ -427,11 +472,8 @@ async function handleGet(request, env, key) {
     }
 }
 
-// ★ MODIFIED: 削除機能を無効化するため、関数の内容をコメントアウトし、エラーを返すように変更
 async function handleLogicalDelete(request, env, decodedToken, key, context) {
-    return new Response(JSON.stringify({ error: "This feature is currently disabled." }), { status: 405 });
-    /*
-    // 機能を復活させる場合のコード
+    // 削除機能は現在フロントエンドから無効化されているが、バックエンドロジックは残しておく
     if (!decodedToken || !decodedToken.sub) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
     const user = { uid: decodedToken.sub };
 
@@ -449,17 +491,14 @@ async function handleLogicalDelete(request, env, decodedToken, key, context) {
         const updateResult = results[0];
         if (updateResult.meta.changes === 0) return new Response(JSON.stringify({ error: "File not found or access denied during transaction." }), { status: 404 });
 
-        const urlToPurge = new URL('/api/chunk/latest', request.url);
-        const req = new Request(urlToPurge.toString(), request);
-        context.waitUntil(caches.default.delete(req));
-        console.log("Purged cache for /api/chunk/latest");
+        // ★ MODIFIED: 削除時も関連キャッシュを削除
+        context.waitUntil(purgeCaches(context, { modelId: audioInfo.model_name, userId: audioInfo.user_id }));
 
         return new Response(JSON.stringify({ success: true, key: key }), { status: 200, headers: { 'Content-Type': 'application/json' }});
     } catch (error) {
         console.error("Logical delete failed:", error);
         return new Response(JSON.stringify({ error: "Failed to delete audio file." }), { status: 500 });
     }
-    */
 }
 
 async function handleProfile(request, env, decodedToken) {
