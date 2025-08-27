@@ -464,6 +464,8 @@ async function handleGet(request, env, key) {
         const headers = new Headers();
         object.writeHttpMetadata(headers);
         headers.set("etag", object.httpEtag);
+        // ★ MODIFIED: R2から取得した音声ファイルに1年間のキャッシュヘッダーを設定します。
+        // これにより、CloudflareのCDNやブラウザに長期間キャッシュされ、2回目以降のアクセスが高速になります。
         headers.set('Cache-Control', 'public, max-age=31536000');
         return new Response(object.body, { headers });
     } catch (error) {
