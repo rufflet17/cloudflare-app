@@ -88,6 +88,26 @@
         .progress-bar { height: 100%; width: 0%; background-color: var(--primary-color); border-radius: 3px; }
         .time-display { font-size: 0.8em; color: #666; min-width: 75px; text-align: right; user-select: none; }
 
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .slider-container input[type="range"] {
+            flex-grow: 1;
+            width: auto;
+            margin-bottom: 0;
+        }
+        .slider-container input[type="number"] {
+            width: 80px;
+            flex-shrink: 0;
+            margin-bottom: 0;
+        }
+        .slider-container span {
+            min-width: 40px;
+            text-align: right;
+        }
+
         .card-status { font-size: 0.9em; font-weight: bold; min-height: 1.2em; color: var(--primary-color); }
         .card-text-wrapper { display: flex; align-items: baseline; gap: 8px; }
         .card-index { font-weight: bold; color: #6c757d; }
