@@ -75,8 +75,6 @@
         .download-link.icon-btn:hover { color: var(--success-color); border-color: var(--success-color); }
         .btn-delete:hover, .btn-delete-r2:hover { color: var(--danger-color); border-color: var(--danger-color); }
         .btn-view-user-files:hover { color: var(--info-color); border-color: var(--info-color); }
-        /* ★ ADDED: Share button style */
-        .btn-share:hover:not(:disabled) { color: var(--info-color); border-color: var(--info-color); }
         
         /* ★ MODIFIED: Custom Audio Player Styles with SVG support */
         .custom-audio-player { display: flex; align-items: center; gap: 10px; height: 32px; width: 100%; }
@@ -344,21 +342,30 @@
             const formatConfig = (typeof getFormatConfigByContentType === 'function' && getFormatConfigByContentType(isTestPost ? file.content_type : `audio/${file.r2_key.split('.').pop()}`)) || { extension: 'bin' };
             const downloadFilename = (typeof createSafeFileName === 'function' && createSafeFileName(file.model_name, file.text_content, formatConfig.extension)) || 'audio.bin';
             
+            // ★ MODIFIED: 投稿ごとの名前を表示
             const ownerUsername = file.username || '匿名';
             const isOwnFile = currentUid && file.user_id === currentUid;
             const ownerIndicator = isOwnFile ? ` <span class="is-own">(自分)</span>` : '';
             const ownerInfoHtml = `<span>${ownerUsername}${ownerIndicator}</span>`;
             
+            // ★ MODIFIED: 削除機能と他ユーザー表示機能を無効化するため、アクションボタンを生成しない
             const actionButton = '';
+            /*
+            // 機能を復活させる場合のコード
+            const deleteBtnDataAttr = isTestPost ? `data-is-test-post="true"` : '';
+            let actionButtonHtml = '';
+            if (isOwnFile || isTestPost) {
+                // 削除ボタン (無効化中)
+                // actionButtonHtml = `<button class="icon-btn btn-delete-r2" title="削除" ${deleteBtnDataAttr}>🗑️</button>`;
+            } else {
+                 // 他ユーザー投稿表示ボタン (無効化中)
+                 // actionButtonHtml = `<button class="icon-btn btn-view-user-files" title="この投稿者の他の音声">👤</button>`;
+            }
+            */
 
             let audioSrc, downloadHref;
             if (isTestPost) { try { const blob = base64toBlob(file.audio_base_64, file.content_type); const url = URL.createObjectURL(blob); audioSrc = url; downloadHref = url; } catch (e) { console.error("Error creating blob URL for test post:", e); audioSrc = ''; downloadHref = '#'; } } else { audioSrc = `/api/get/${encodeURIComponent(file.r2_key)}`; downloadHref = audioSrc; }
             
-            // ★ ADDED: Share button is only available for non-test posts (i.e., saved in R2).
-            const shareButtonHtml = !isTestPost
-                ? `<button class="icon-btn btn-share" title="音声URLをコピー">🔗</button>`
-                : '';
-
             card.innerHTML = `
                 <div class="card-main">
                     <div style="margin-bottom: 8px;">
@@ -378,7 +385,6 @@
                 </div>
                 <div class="player-actions">
                     <a href="${downloadHref}" download="${downloadFilename}" class="icon-btn download-link" title="ダウンロード">📥</a>
-                    ${shareButtonHtml}
                     ${actionButton}
                 </div>`;
             r2GalleryContainer.appendChild(card);
@@ -408,8 +414,9 @@
     async function loadR2Gallery() { const r2GalleryContainer = document.getElementById('r2-gallery-container'); if (r2GalleryState.isLoading) return; r2GalleryState.isLoading = true; r2GalleryContainer.innerHTML = '<p>読み込み中...</p>'; updateR2PaginationUI(); updateR2FilterStatusUI(); try { if(r2GalleryState.filter !== 'all' || r2GalleryState.modelId || r2GalleryState.searchText || r2GalleryState.userId) { const params = new URLSearchParams({ page: r2GalleryState.currentPage, limit: R2_ITEMS_PER_PAGE }); if (r2GalleryState.filter === 'mine') params.set('filter', 'mine'); if (r2GalleryState.modelId) params.set('modelId', r2GalleryState.modelId); if (r2GalleryState.searchText) params.set('searchText', r2GalleryState.searchText); if (r2GalleryState.userId) params.set('userId', r2GalleryState.userId); const response = await fetch(`/api/list?${params.toString()}`); if (!response.ok) throw new Error('Failed to fetch filtered list'); const files = await response.json(); r2GalleryState.hasNextPage = files.length === R2_ITEMS_PER_PAGE; renderR2Gallery(files); } else { const chunkData = await fetchAndBuildPage(r2GalleryState.currentPage); let filesToDisplay; if (r2GalleryState.currentPage === 1) { const allTestPosts = await getAllTestPosts(); const combined = [...chunkData, ...allTestPosts]; const unique = Array.from(new Map(combined.map(item => [item.r2_key, item])).values()); unique.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); filesToDisplay = unique.slice(0, R2_ITEMS_PER_PAGE); } else { const pageStart = (r2GalleryState.currentPage - 1) * R2_ITEMS_PER_PAGE; const pageEnd = pageStart + R2_ITEMS_PER_PAGE; filesToDisplay = chunkData.slice(pageStart % R2_ITEMS_PER_PAGE, (pageEnd % R2_ITEMS_PER_PAGE) || R2_ITEMS_PER_PAGE); } renderR2Gallery(filesToDisplay); const metadata = await getLatestMetadata(); if (metadata) { const totalPages = Math.ceil(metadata.totalAudios / R2_ITEMS_PER_PAGE); r2GalleryState.hasNextPage = r2GalleryState.currentPage < totalPages; } else { r2GalleryState.hasNextPage = false; } } } catch (error) { console.error('R2 gallery load error:', error); r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`; r2GalleryState.hasNextPage = false; } finally { r2GalleryState.isLoading = false; updateR2PaginationUI(); } }
     
     async function saveAudioAsTestPost(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('テスト投稿の対象データが不完全です。', true); return; }
+        // ★ MODIFIED: 投稿前に名前の入力を求める
         const nameInput = prompt("投稿者名を入力してください（10文字以内、空欄で匿名）：", "");
-        if (nameInput === null) return;
+        if (nameInput === null) return; // キャンセルされた場合
         let username = nameInput.trim();
         if (username.length > 10) { alert("名前は10文字以内で入力してください。"); return; }
         if (username === "") username = "匿名";
@@ -430,123 +437,35 @@
         } catch (error) { console.error('Test post save error:', error); setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true);
         } finally { button.disabled = false; }
     }
-    
     async function saveAudioToR2(blob, modelId, text, button) {
-        if (!blob || !modelId || !text) {
-            setStatus('保存対象の音声データが不完全です。', true);
-            return;
-        }
+        if (!blob || !modelId || !text) { setStatus('保存対象の音声データが不完全です。', true); return; }
         
+        // ★ MODIFIED: 投稿前に名前の入力を求める
         const nameInput = prompt("投稿者名を入力してください（10文字以内、空欄で匿名）：", "");
-        if (nameInput === null) return;
+        if (nameInput === null) return; // キャンセルされた場合
         let username = nameInput.trim();
-        if (username.length > 10) {
-            alert("名前は10文字以内で入力してください。");
-            return;
-        }
+        if (username.length > 10) { alert("名前は10文字以内で入力してください。"); return; }
         if (username === "") username = "匿名";
         if (!confirm(`名前: ${username}\nテキスト: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}\n\nこの内容で投稿しますか？`)) {
             return;
         }
 
-        setStatus('R2に音声を保存中...');
-        button.disabled = true;
-
+        setStatus('R2に音声を保存中...'); button.disabled = true;
         try {
             const reader = new FileReader();
             reader.readAsDataURL(blob);
             reader.onloadend = async () => {
                 try {
                     const base64Audio = reader.result.split(',')[1];
-                    const response = await fetch('/api/upload', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ modelId: modelId, text: text, username: username, audioBase64: base64Audio, contentType: blob.type })
-                    });
-
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({ error: response.statusText, reason: null }));
-                        if (response.status === 403 && errorData.reason === 'muted') {
-                            await saveAudioAsTestPost(blob, modelId, text, button);
-                            return;
-                        }
-                        throw new Error(`R2への保存に失敗: ${errorData.error}`);
-                    }
-
+                    // ★ MODIFIED: usernameをAPIに送信
+                    const response = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: modelId, text: text, username: username, audioBase64: base64Audio, contentType: blob.type }) });
+                    if (!response.ok) { const errorData = await response.json().catch(() => ({ error: response.statusText, reason: null })); if (response.status === 403 && errorData.reason === 'muted') { await saveAudioAsTestPost(blob, modelId, text, button); return; } throw new Error(`R2への保存に失敗: ${errorData.error}`); }
                     const result = await response.json();
-                    const uploadedKey = result.r2_key;
-
-                    if (!uploadedKey) {
-                        console.warn("Upload API did not return a key. Performing a simple refresh.");
-                        setStatus('音声をR2に保存しました。一覧を更新します。');
-                        button.disabled = false;
-                        const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
-                        if (r2TabButton && !r2TabButton.classList.contains('locked-feature')) {
-                            latestMetadata = null;
-                            chunkCache.clear();
-                            r2TabButton.click();
-                        }
-                        return;
-                    }
-
-                    setStatus('投稿を処理中... 一覧への反映を確認しています。');
-
-                    const MAX_ATTEMPTS = 15;
-                    const DELAY = 2000;
-                    let attempts = 0;
-
-                    const pollForPost = async () => {
-                        if (attempts >= MAX_ATTEMPTS) {
-                            setStatus('投稿の反映に時間がかかっているようです。後ほど手動で一覧を更新してください。', true);
-                            button.disabled = false;
-                            return;
-                        }
-                        attempts++;
-
-                        try {
-                            const params = new URLSearchParams({ filter: 'mine', limit: 50 });
-                            const checkResponse = await fetch(`/api/list?${params.toString()}`);
-                            if (!checkResponse.ok) throw new Error('Polling check failed');
-
-                            const files = await checkResponse.json();
-                            const foundPost = files.some(file => file.r2_key === uploadedKey);
-
-                            if (foundPost) {
-                                setStatus('音声をR2に保存しました。一覧を更新します。');
-                                button.disabled = false;
-                                const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
-                                if (r2TabButton && !r2TabButton.classList.contains('locked-feature')) {
-                                    document.getElementById('r2-filter-mine-toggle').checked = false;
-                                    document.getElementById('r2-search-model-select').value = '';
-                                    document.getElementById('r2-search-text-input').value = '';
-                                    
-                                    Object.assign(r2GalleryState, { filter: 'all', modelId: '', searchText: '', userId: '', currentPage: 1 });
-
-                                    latestMetadata = null;
-                                    chunkCache.clear();
-                                    r2TabButton.click();
-                                }
-                            } else {
-                                setTimeout(pollForPost, DELAY);
-                            }
-                        } catch (pollError) {
-                            console.error('Polling error:', pollError);
-                            setTimeout(pollForPost, DELAY);
-                        }
-                    };
-                    pollForPost();
-                } catch (err) {
-                    console.error('R2 save error:', err);
-                    setStatus(err.message, true);
-                    button.disabled = false;
-                }
-            };
-            reader.onerror = (error) => { throw error; };
-        } catch (error) {
-            console.error('File reading error:', error);
-            setStatus('ファイルの読み込みに失敗しました。', true);
-            button.disabled = false;
-        }
+                    setStatus('音声をR2に保存しました。'); const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if(r2TabButton && !r2TabButton.classList.contains('locked-feature')) { r2TabButton.click(); }
+                } catch (err) { console.error('R2 save error:', err); setStatus(err.message, true);
+                } finally { if (button.disabled) { button.disabled = false; } }
+            }; reader.onerror = (error) => { throw error; };
+        } catch (error) { console.error('File reading error:', error); setStatus('ファイルの読み込みに失敗しました。', true); button.disabled = false; }
     }
     
     function setupAuthEventListeners() { document.getElementById('login-btn').addEventListener('click', () => { const provider = new firebase.auth.GoogleAuthProvider(); auth.signInWithPopup(provider).catch(error => { if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') { console.log(`ログインがキャンセルされました: ${error.code}`); } else { console.error("Googleログインエラー:", error); alert(`ログインに失敗しました: ${error.message}`); } }); }); document.getElementById('logout-btn').addEventListener('click', () => auth.signOut()); }
@@ -559,6 +478,8 @@
             r2GalleryState.searchText = document.getElementById('r2-search-text-input').value;
             r2GalleryState.filter = document.getElementById('r2-filter-mine-toggle').checked ? 'mine' : 'all';
             r2GalleryState.currentPage = 1;
+            // ★ MODIFIED: 他ユーザーフィルター機能が無いため、userIdのリセットは不要
+            // r2GalleryState.userId = ''; 
             loadR2Gallery();
         };
         document.getElementById('r2-filter-mine-toggle').addEventListener('change', handleFilterChange);
@@ -570,8 +491,6 @@
         document.getElementById('r2-gallery-container').addEventListener('click', async (e) => {
             const card = e.target.closest('.player-card');
             if (!card) return;
-
-            // --- Player controls ---
             const playBtn = e.target.closest('.play-pause-btn');
             const progressWrapper = e.target.closest('.progress-wrapper');
             if (playBtn || progressWrapper) {
@@ -581,24 +500,48 @@
                 if (progressWrapper && audio.duration) { const rect = progressWrapper.getBoundingClientRect(); const clickX = e.clientX - rect.left; const width = rect.width; const duration = audio.duration; audio.currentTime = (clickX / width) * duration; }
                 return;
             }
-
-            // ★ ADDED: Share button click handler
-            const shareButton = e.target.closest('.btn-share');
-            if (shareButton) {
+            /*
+            // ★ MODIFIED: 削除機能と他ユーザー表示機能を無効化するため、イベントリスナーをコメントアウト
+            const deleteButton = e.target.closest('.btn-delete-r2');
+            if (deleteButton) {
                 const fileKey = card.dataset.fileKey;
-                if (!fileKey) return;
-
-                const shareUrl = `${window.location.origin}/api/get/${encodeURIComponent(fileKey)}`;
-                
-                try {
-                    await navigator.clipboard.writeText(shareUrl);
-                    alert(`以下のURLをクリップボードにコピーしました:\n${shareUrl}`);
-                } catch (err) {
-                    console.error('クリップボードへのコピーに失敗しました:', err);
-                    prompt('このURLを手動でコピーしてください:', shareUrl);
+                const isTestPost = deleteButton.dataset.isTestPost === 'true';
+                if (isTestPost) {
+                    if (confirm(`このテスト投稿をブラウザから削除しますか？`)) {
+                        try {
+                            const audioEl = card.querySelector('audio');
+                            if (audioEl && audioEl.src.startsWith('blob:')) { URL.revokeObjectURL(audioEl.src); }
+                            await deleteTestPost(fileKey);
+                            card.remove();
+                        } catch(dbError) { alert(`削除に失敗しました: ${dbError.message}`); }
+                    }
+                } else {
+                    const downloadLink = card.querySelector('.download-link');
+                    const filename = downloadLink ? downloadLink.download : fileKey;
+                    if (confirm(`ファイル「${filename}」を完全に削除しますか？この操作は元に戻せません。`)) {
+                        try {
+                            deleteButton.disabled = true;
+                            const response = await fetch(`/api/delete/${encodeURIComponent(fileKey)}`, { method: 'DELETE' });
+                            if (!response.ok) throw new Error((await response.json()).error || '削除に失敗しました');
+                            loadR2Gallery();
+                        } catch(error) { alert(error.message); deleteButton.disabled = false; }
+                    }
                 }
                 return;
             }
+            const viewUserBtn = e.target.closest('.btn-view-user-files');
+            if (viewUserBtn) {
+                r2GalleryState.userId = card.dataset.userId;
+                r2GalleryState.currentPage = 1;
+                r2GalleryState.filter = '';
+                r2GalleryState.modelId = '';
+                r2GalleryState.searchText = '';
+                document.getElementById('r2-filter-mine-toggle').checked = false;
+                document.getElementById('r2-search-model-select').value = '';
+                document.getElementById('r2-search-text-input').value = '';
+                loadR2Gallery();
+            }
+            */
         });
     }
 
