@@ -239,10 +239,48 @@
             </div>
         </div>
         <div class="container-content">
+            <!-- ★★★ ここからが修正箇所 ★★★ -->
             <div id="tab-tts" class="tab-content active">
-                <div class="grid-container"><div><label for="model-select-tts">音声モデル:</label><select id="model-select-tts"></select></div></div>
-                <div class="grid-container"><div><label for="style-id-input">スタイルID (例: 0, 1, ...):</label><input type="number" id="style-id-input" value="0" min="0"></div><div><label for="style_strength">スタイル強度:</label><div class="slider-container"><input type="range" id="style_strength" min="0" max="2" step="0.05" value="1.0"><span id="strength-value">1.00</span></div></div></div>
-                <label for="text">テキスト (1行50文字, 最大10行まで):</label><textarea id="text" rows="5">こんにちは</textarea>
+                <div class="grid-container">
+                    <div>
+                        <label for="model-select-tts">音声モデル:</label>
+                        <select id="model-select-tts"></select>
+                    </div>
+                </div>
+                <div class="grid-container">
+                    <div>
+                        <label for="style-id-input">スタイルID (例: 0, 1, ...):</label>
+                        <input type="number" id="style-id-input" value="0" min="0">
+                    </div>
+                    <div>
+                        <label for="style_strength">スタイル強度:</label>
+                        <div class="slider-container">
+                            <input type="range" id="style_strength" min="0" max="2" step="0.05" value="1.0">
+                            <span id="strength-value">1.00</span>
+                        </div>
+                    </div>
+                </div>
+            
+                <!-- ★ MODIFIED: 音量と話速のスライダーを追加 -->
+                <div class="grid-container">
+                    <div>
+                        <label for="speed-slider">話速:</label>
+                        <div class="slider-container">
+                            <input type="range" id="speed-slider" min="0.5" max="2.0" step="0.1" value="1.0">
+                            <span id="speed-value">1.0</span>
+                        </div>
+                    </div>
+                    <div>
+                        <label for="volume-slider">音量:</label>
+                        <div class="slider-container">
+                            <input type="range" id="volume-slider" min="0.1" max="2.0" step="0.1" value="1.0">
+                            <span id="volume-value">1.0</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <label for="text">テキスト (1行50文字, 最大10行まで):</label>
+                <textarea id="text" rows="5">こんにちは</textarea>
                 <div class="button-group">
                     <button id="generate-btn">音声生成</button>
                 </div>
@@ -256,6 +294,7 @@
                     </div>
                 </div>
             </div>
+            <!-- ★★★ ここまでが修正箇所 ★★★ -->
 
             <div id="tab-results" class="tab-content">
                 <div class="button-group" style="margin-top: 0; margin-bottom: 20px;">

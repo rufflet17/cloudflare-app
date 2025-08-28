@@ -19,7 +19,8 @@ function arrayBufferToBase64(buffer) {
 }
 
 async function synthesizeSingleText(text, modelUuid, apiKey, options, audioConfig) {
-    const { style_id, style_strength } = options;
+    // ★ 変更点: optionsからspeedとvolumeを受け取る
+    const { style_id, style_strength, speed, volume } = options;
     
     // Aivis APIのエンドポイント
     const aivisApiUrl = 'https://api.aivis-project.com/v1/tts/synthesize';
@@ -29,11 +30,18 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options, audioConfi
         text: text,
         model_uuid: modelUuid,
         style_id: Number(style_id),
-        // AIVIS APIの仕様に合わせてキーを 'output_format' に修正
-        output_format: audioConfig.format
-        // 注: style_strength はAPI仕様にないため、必要に応じて 'speaking_rate' などにマッピングしてください
+        output_format: audioConfig.format,
+        // 注: style_strength はAIVIS APIの仕様にないため、コメントアウトのままにしておきます
         // speaking_rate: style_strength
     };
+
+    // ★ 変更点: speed と volume が指定されていればペイロードに追加
+    if (speed !== undefined && speed !== null) {
+        requestPayload.speed = Number(speed);
+    }
+    if (volume !== undefined && volume !== null) {
+        requestPayload.volume = Number(volume);
+    }
     
     try {
         // Aivis APIへのリクエスト
@@ -46,7 +54,6 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options, audioConfi
             body: JSON.stringify(requestPayload)
         });
 
-        // APIからのエラーレスポンスを処理
         if (!aivisResponse.ok) {
             const errorText = await aivisResponse.text();
             return {
@@ -56,21 +63,18 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options, audioConfi
             };
         }
 
-        // 実際にAPIが返した音声データのContent-Typeを取得
         const actualContentType = aivisResponse.headers.get('Content-Type');
         const audioArrayBuffer = await aivisResponse.arrayBuffer();
         const audioBase64 = arrayBufferToBase64(audioArrayBuffer);
         
-        // 成功時のレスポンスを組み立てる
         return {
             status: 'success',
             text: text,
             audio_base_64: audioBase64,
-            content_type: actualContentType // 実際のContent-Typeを返す
+            content_type: actualContentType
         };
 
     } catch (e) {
-        // ネットワークエラーなどを処理
         return {
             status: 'error',
             text: text,
@@ -83,9 +87,9 @@ async function handleRequest(context) {
     const { env } = context;
     const body = await context.request.json();
     
-    const { model_id, texts, style_id, style_strength, format = 'mp3' } = body;
+    // ★ 変更点: リクエストボディから speed と volume を受け取る
+    const { model_id, texts, style_id, style_strength, format = 'mp3', speed, volume } = body;
 
-    // 入力値のバリデーション
     if (!texts || !Array.isArray(texts) || texts.length === 0) {
         return new Response("リクエストボディに 'texts' (配列) が必要です。", { status: 400 });
     }
@@ -98,7 +102,6 @@ async function handleRequest(context) {
         return new Response(`Unsupported format: ${format}. Supported formats are: ${SUPPORTED_FORMATS.join(', ')}`, { status: 400 });
     }
     
-    // 環境変数からUUIDとAPIキーを取得
     const targetModelUuid = env[`MODEL_UUID_${model_id}`];
     const apiKey = env.API_KEY;
 
@@ -109,21 +112,19 @@ async function handleRequest(context) {
         return new Response(`サーバーエラー: モデルID ${model_id} のUUIDが見つかりません。`, { status: 400 });
     }
     
-    const options = { style_id, style_strength };
+    // ★ 変更点: optionsオブジェクトに speed と volume を含める
+    const options = { style_id, style_strength, speed, volume };
     
-    // 複数のテキストを並列で処理
     const results = await Promise.all(
         texts.map(text => synthesizeSingleText(text, targetModelUuid, apiKey, options, audioConfig))
     );
 
-    // 結果をJSON形式で返す
     return new Response(JSON.stringify(results), {
         headers: { 'Content-Type': 'application/json' }
     });
 }
 
 export async function onRequest(context) {
-    // CORS プリフライトリクエストの処理
     if (context.request.method === 'OPTIONS') {
         return new Response(null, {
             headers: {
@@ -140,7 +141,6 @@ export async function onRequest(context) {
 
     try {
         const response = await handleRequest(context);
-        // CORSヘッダーを追加
         response.headers.set('Access-Control-Allow-Origin', '*');
         return response;
     } catch (e) {

@@ -10,6 +10,9 @@ const modelSelectTTS = document.getElementById('model-select-tts'), modelSelectB
 const generateBtn = document.getElementById('generate-btn'), generatePreviewBtn = document.getElementById('generate-preview-btn');
 const textInput = document.getElementById('text'), styleIdInput = document.getElementById('style-id-input');
 const styleStrengthInput = document.getElementById('style_strength'), strengthValueSpan = document.getElementById('strength-value');
+// ★ NEW: 音量・話速のDOM要素を取得
+const speedSlider = document.getElementById('speed-slider'), speedValueSpan = document.getElementById('speed-value');
+const volumeSlider = document.getElementById('volume-slider'), volumeValueSpan = document.getElementById('volume-value');
 const statusDiv = document.getElementById('status'), resultsContainer = document.getElementById('results-container');
 const combinedResultContainer = document.getElementById('combined-result-container');
 const combinedAudioPlayer = document.getElementById('combined-audio-player');
@@ -490,7 +493,24 @@ const processAudioRequest = async (linesToProcess) => {
     setStatus(`${linesToProcess.length}件の音声を生成中...`);
     try {
         const requestFormat = formatSelect.value === 'wav' ? 'flac' : formatSelect.value;
-        const response = await fetch('/synthesize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model_id: getCurrentModelId(), texts: linesToProcess, style_id: styleIdInput.value, style_strength: parseFloat(styleStrengthInput.value), format: requestFormat }) });
+        
+        // ★ MODIFIED: 音声生成リクエストに音量・話速を追加
+        const requestBody = {
+            model_id: getCurrentModelId(),
+            texts: linesToProcess,
+            style_id: styleIdInput.value,
+            style_strength: parseFloat(styleStrengthInput.value),
+            format: requestFormat,
+            speed: parseFloat(speedSlider.value),
+            volume: parseFloat(volumeSlider.value)
+        };
+        
+        const response = await fetch('/synthesize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody)
+        });
+        
         if (!response.ok) throw new Error(`APIエラー (${response.status}): ${await response.text()}`);
         return await response.json();
     } catch (error) { setStatus(error.message, true); return null;
@@ -719,7 +739,21 @@ function setupSettingsEventListeners() {
 }
 
 function setupAudioEventListeners() {
-    styleStrengthInput.addEventListener('input', () => { strengthValueSpan.textContent = parseFloat(styleStrengthInput.value).toFixed(2); });
+    // ★ NEW: スライダーの値表示を更新するヘルパー関数
+    const setupSliderWithValueDisplay = (slider, display, fixed) => {
+        if (slider && display) {
+            display.textContent = parseFloat(slider.value).toFixed(fixed);
+            slider.addEventListener('input', () => {
+                display.textContent = parseFloat(slider.value).toFixed(fixed);
+            });
+        }
+    };
+
+    // ★ NEW: 各スライダーを初期化
+    setupSliderWithValueDisplay(styleStrengthInput, strengthValueSpan, 2);
+    setupSliderWithValueDisplay(speedSlider, speedValueSpan, 1);
+    setupSliderWithValueDisplay(volumeSlider, volumeValueSpan, 1);
+    
     resultsContainer.addEventListener('click', async (e) => {
         const button = e.target.closest('.icon-btn'); if (!button) return;
         const card = button.closest('.player-card'); const cardId = card.dataset.cardId;
