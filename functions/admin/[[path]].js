@@ -126,7 +126,6 @@ async function handleGetPostsSince(env, params) {
         const query = `
             SELECT 
                 a.id, a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, a.is_deleted, a.deleted_at,
-                a.username AS post_username,
                 p.username,
                 us.is_blocked, us.is_muted
             FROM audios AS a
@@ -166,7 +165,6 @@ async function handleGetAllPosts(env, params) {
         const query = `
             SELECT 
                 a.id, a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, a.is_deleted, a.deleted_at,
-                a.username AS post_username,
                 p.username,
                 us.is_blocked, us.is_muted
             FROM audios AS a
