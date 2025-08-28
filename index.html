@@ -233,7 +233,7 @@
             <div class="tab-navigation">
                 <button class="tab-button active" data-tab="tts">音声合成</button>
                 <button class="tab-button" data-tab="results">合成結果</button>
-                <button class="tab-button" data-tab="r2-gallery">保存済み音声</button>
+                <button class="tab-button" data-tab="r2-gallery">シェアされた音声</button>
                 <button class="tab-button" data-tab="background">背景設定</button>
                 <button class="tab-button" data-tab="ui">UI/データ管理</button>
             </div>
@@ -252,7 +252,7 @@
                     <audio id="combined-audio-player" controls style="width: 100%; margin-bottom: 12px;"></audio>
                     <div class="button-group">
                         <button id="download-combined-btn" style="display: none;">この音声をダウンロード</button>
-                        <button id="save-to-r2-btn" style="display: none;">R2に保存</button>
+                        <button id="save-to-r2-btn" style="display: none;">シェア</button>
                     </div>
                 </div>
             </div>
@@ -266,7 +266,7 @@
                     <audio id="combined-preview-player" controls></audio>
                     <div class="button-group">
                         <button id="download-combined-preview-btn">この結合音声をダウンロード</button>
-                        <button id="save-preview-to-r2-btn">この結合音声をR2に保存</button>
+                        <button id="save-preview-to-r2-btn">この結合音声をシェア</button>
                     </div>
                 </div>
                 <div id="results-container"></div>
@@ -302,7 +302,7 @@
                         </div>
                     </div>
                     <div id="r2-gallery-container">
-                         <p>「一覧を更新」ボタンを押して、保存済みの音声を表示します。</p>
+                         <p>「一覧を更新」ボタンを押して、シェアされた音声を表示します。</p>
                     </div>
                     <div id="r2-pagination-controls">
                         <button id="r2-prev-page-btn" class="icon-btn">◀</button>
@@ -350,7 +350,7 @@
     async function enforceLimit() { if (!db) return; const transaction = db.transaction([STORE_NAME], 'readwrite'); const store = transaction.objectStore(STORE_NAME); const index = store.index('created_at'); const countRequest = index.count(); countRequest.onsuccess = () => { const count = countRequest.result; if (count > 50) { const itemsToDelete = count - 50; const cursorRequest = index.openCursor(null, 'next'); let deletedCount = 0; cursorRequest.onsuccess = (event) => { const cursor = event.target.result; if (cursor && deletedCount < itemsToDelete) { cursor.delete(); deletedCount++; cursor.continue(); } }; } }; }
 
     // --- Authentication (Firebase) ---
-    function setupAuth() { const firebaseConfig = { apiKey: "AIzaSyCfnWPi16Tt8PQGzb6Qo2ql3yFf2GSGaN8", authDomain: "voice-1e03c.firebaseapp.com", projectId: "voice-1e03c", storageBucket: "voice-1e03c.firebasestorage.app", messagingSenderId: "1067746798695", appId: "1:1067746798695:web:76bc39f08b51fc512c38c2", measurementId: "G-W5TEENZEJ0" }; const PROTECTED_API_PATHS = ['/api/upload', '/api/delete', '/api/profile', '/api/my-profile']; firebase.initializeApp(firebaseConfig); auth = firebase.auth(); let currentUser = null; let userProfile = null; async function getIdToken() { if (!auth.currentUser) return null; try { return await auth.currentUser.getIdToken(true); } catch (error) { console.error("IDトークンの取得に失敗:", error); return null; } } const originalFetch = window.fetch; window.fetch = async function(...args) { const url = new URL(args[0], window.location.origin); const options = args[1] || {}; const isProtectedRoute = PROTECTED_API_PATHS.some(path => url.pathname.startsWith(path)); const needsAuthForFilter = url.pathname.startsWith('/api/list') && url.searchParams.get('filter') === 'mine'; if (isProtectedRoute || needsAuthForFilter) { if (!currentUser) { console.warn('保護されたAPIへのリクエストがブロックされました: 未ログイン'); return Promise.reject(new Response(JSON.stringify({ error: 'Authentication required.' }),{ status: 401, statusText: 'Unauthorized' })); } const token = await getIdToken(); if (!token) { console.error('保護されたAPIへのリクエストがブロックされました: トークン取得失敗'); return Promise.reject(new Response(JSON.stringify({ error: 'Failed to retrieve auth token.' }), { status: 401, statusText: 'Unauthorized' })); } options.headers = { ...options.headers, 'Authorization': `Bearer ${token}` }; args[1] = options; } return originalFetch.apply(this, args); }; async function handleEditUsername() { if (!currentUser) return; const currentName = userProfile ? userProfile.username : (currentUser.displayName || ''); const newName = prompt("新しい表示名を入力してください（10文字以内）:", currentName); if (newName === null) { return; } const trimmedName = newName.trim(); if (trimmedName === "") { alert("表示名は空にできません。"); return; } if (trimmedName.length > 10) { alert("表示名は10文字以内で入力してください。"); return; } try { const response = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: trimmedName }) }); if (!response.ok) { const errData = await response.json().catch(() => ({ error: 'サーバーエラー' })); throw new Error(errData.error || '表示名の更新に失敗しました。'); } const result = await response.json(); userProfile = { username: result.username }; document.getElementById('user-info').textContent = result.username; document.getElementById('user-info').title = result.username; alert("表示名を更新しました。"); } catch (error) { console.error("表示名の更新に失敗しました:", error); alert(`エラーが発生しました: ${error.message}`); } } function updateUIForAuthState(user) { const loginBtn = document.getElementById('login-btn'); const logoutBtn = document.getElementById('logout-btn'); const userDisplayWrapper = document.getElementById('user-display-wrapper'); const userInfo = document.getElementById('user-info'); const r2GalleryTab = document.querySelector('.tab-button[data-tab="r2-gallery"]'); const r2GalleryWrapper = document.getElementById('r2-gallery-wrapper'); const r2FilterMineToggle = document.getElementById('r2-filter-mine-toggle'); const saveToR2Btn = document.getElementById('save-to-r2-btn'); const savePreviewToR2Btn = document.getElementById('save-preview-to-r2-btn'); currentUser = user; window.currentUser = user; if (user) { loginBtn.style.display = 'none'; logoutBtn.style.display = 'block'; userDisplayWrapper.style.display = 'flex'; fetch('/api/profile').then(res => res.ok ? res.json() : null) .then(profile => { userProfile = profile; const displayName = profile ? profile.username : (user.displayName || user.email); userInfo.textContent = displayName; userInfo.title = displayName; }).catch(err => { console.error("プロファイル取得エラー:", err); const displayName = user.displayName || user.email; userInfo.textContent = displayName; userInfo.title = displayName; }); document.getElementById('edit-username-btn').onclick = handleEditUsername; r2GalleryTab.classList.remove('locked-feature'); r2GalleryWrapper.classList.remove('locked-feature'); if (saveToR2Btn) saveToR2Btn.disabled = false; if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = false; if (r2FilterMineToggle) r2FilterMineToggle.disabled = false; if (typeof loadR2Gallery === 'function' && r2GalleryTab.classList.contains('active')) { loadR2Gallery(); } } else { currentUser = null; userProfile = null; loginBtn.style.display = 'block'; logoutBtn.style.display = 'none'; userDisplayWrapper.style.display = 'none'; r2GalleryTab.classList.add('locked-feature'); r2GalleryWrapper.classList.add('locked-feature'); if (saveToR2Btn) saveToR2Btn.disabled = true; if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = true; if (r2FilterMineToggle) { r2FilterMineToggle.checked = false; r2FilterMineToggle.disabled = true; } if (r2GalleryTab.classList.contains('active')) { document.querySelector('.tab-button[data-tab="tts"]').click(); } } } auth.onAuthStateChanged(updateUIForAuthState); }
+    function setupAuth() { const firebaseConfig = { apiKey: "AIzaSyCfnWPi16Tt8PQGzb6Qo2ql3yFf2GSGaN8", authDomain: "voice-1e03c.firebaseapp.com", projectId: "voice-1e03c", storageBucket: "voice-1e03c.firebasestorage.app", messagingSenderId: "1067746798695", appId: "1:1067746798695:web:76bc39f08b51fc512c38c2", measurementId: "G-W5TEENZEJ0" }; const PROTECTED_API_PATHS = ['/api/upload', '/api/delete', '/api/profile', '/api/my-profile']; firebase.initializeApp(firebaseConfig); auth = firebase.auth(); let currentUser = null; let userProfile = null; let wasLoggedIn = null; async function getIdToken() { if (!auth.currentUser) return null; try { return await auth.currentUser.getIdToken(true); } catch (error) { console.error("IDトークンの取得に失敗:", error); return null; } } const originalFetch = window.fetch; window.fetch = async function(...args) { const url = new URL(args[0], window.location.origin); const options = args[1] || {}; const isProtectedRoute = PROTECTED_API_PATHS.some(path => url.pathname.startsWith(path)); const needsAuthForFilter = url.pathname.startsWith('/api/list') && url.searchParams.get('filter') === 'mine'; if (isProtectedRoute || needsAuthForFilter) { if (!currentUser) { console.warn('保護されたAPIへのリクエストがブロックされました: 未ログイン'); return Promise.reject(new Response(JSON.stringify({ error: 'Authentication required.' }),{ status: 401, statusText: 'Unauthorized' })); } const token = await getIdToken(); if (!token) { console.error('保護されたAPIへのリクエストがブロックされました: トークン取得失敗'); return Promise.reject(new Response(JSON.stringify({ error: 'Failed to retrieve auth token.' }), { status: 401, statusText: 'Unauthorized' })); } options.headers = { ...options.headers, 'Authorization': `Bearer ${token}` }; args[1] = options; } return originalFetch.apply(this, args); }; async function handleEditUsername() { if (!currentUser) return; const currentName = userProfile ? userProfile.username : (currentUser.displayName || ''); const newName = prompt("新しい表示名を入力してください（10文字以内）:", currentName); if (newName === null) { return; } const trimmedName = newName.trim(); if (trimmedName === "") { alert("表示名は空にできません。"); return; } if (trimmedName.length > 10) { alert("表示名は10文字以内で入力してください。"); return; } try { const response = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: trimmedName }) }); if (!response.ok) { const errData = await response.json().catch(() => ({ error: 'サーバーエラー' })); throw new Error(errData.error || '表示名の更新に失敗しました。'); } const result = await response.json(); userProfile = { username: result.username }; document.getElementById('user-info').textContent = result.username; document.getElementById('user-info').title = result.username; alert("表示名を更新しました。"); } catch (error) { console.error("表示名の更新に失敗しました:", error); alert(`エラーが発生しました: ${error.message}`); } } function updateUIForAuthState(user) { const loginBtn = document.getElementById('login-btn'); const logoutBtn = document.getElementById('logout-btn'); const userDisplayWrapper = document.getElementById('user-display-wrapper'); const userInfo = document.getElementById('user-info'); const r2GalleryTab = document.querySelector('.tab-button[data-tab="r2-gallery"]'); const r2GalleryWrapper = document.getElementById('r2-gallery-wrapper'); const r2FilterMineToggle = document.getElementById('r2-filter-mine-toggle'); const saveToR2Btn = document.getElementById('save-to-r2-btn'); const savePreviewToR2Btn = document.getElementById('save-preview-to-r2-btn'); currentUser = user; window.currentUser = user; if (user) { loginBtn.style.display = 'none'; logoutBtn.style.display = 'block'; userDisplayWrapper.style.display = 'flex'; fetch('/api/profile').then(res => res.ok ? res.json() : null) .then(profile => { userProfile = profile; const displayName = profile ? profile.username : (user.displayName || user.email); userInfo.textContent = displayName; userInfo.title = displayName; }).catch(err => { console.error("プロファイル取得エラー:", err); const displayName = user.displayName || user.email; userInfo.textContent = displayName; userInfo.title = displayName; }); document.getElementById('edit-username-btn').onclick = handleEditUsername; r2GalleryTab.classList.remove('locked-feature'); r2GalleryWrapper.classList.remove('locked-feature'); if (saveToR2Btn) saveToR2Btn.disabled = false; if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = false; if (r2FilterMineToggle) r2FilterMineToggle.disabled = false; if (typeof loadR2Gallery === 'function' && r2GalleryTab.classList.contains('active')) { loadR2Gallery(); } } else { currentUser = null; userProfile = null; loginBtn.style.display = 'block'; logoutBtn.style.display = 'none'; userDisplayWrapper.style.display = 'none'; if (saveToR2Btn) saveToR2Btn.disabled = true; if (savePreviewToR2Btn) savePreviewToR2Btn.disabled = true; if (r2FilterMineToggle) { r2FilterMineToggle.checked = false; r2FilterMineToggle.disabled = true; } } } auth.onAuthStateChanged(user => { const isLoggedIn = !!user; if (wasLoggedIn !== null) { if (isLoggedIn && !wasLoggedIn) { showToast('ログインしました。'); } else if (!isLoggedIn && wasLoggedIn) { showToast('ログアウトしました。'); } } wasLoggedIn = isLoggedIn; updateUIForAuthState(user); }); }
     
     // ★ NEW: Toast notification function
     function showToast(message, type = 'success', duration = 3000) {
@@ -468,7 +468,7 @@
         let username = nameInput.trim();
         if (username.length > 10) { alert("名前は10文字以内で入力してください。"); return; }
         if (username === "") username = "匿名";
-        if (!confirm(`名前: ${username}\n\nこの内容でテスト投稿として保存しますか？`)) return;
+        if (!confirm(`名前: ${username}\n\nこの内容でテスト投稿としてシェアしますか？`)) return;
 
         setStatus('テスト投稿を準備中...'); button.disabled = true; let userId;
         try {
@@ -478,9 +478,9 @@
                 try {
                     const base64Audio = reader.result.split(',')[1];
                     const newPost = { r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`, model_name: modelId, text_content: text, user_id: userId, username: username, audio_base_64: base64Audio, content_type: blob.type, is_test_post: true, created_at: new Date().toISOString() };
-                    await addTestPost(newPost); await enforceLimit(); setStatus('音声をテスト投稿として保存しました。');
+                    await addTestPost(newPost); await enforceLimit(); setStatus('音声をテスト投稿としてシェアしました。');
                     const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if (r2TabButton) r2TabButton.click();
-                } catch(dbError) { console.error('IndexedDBへの保存エラー:', dbError); setStatus(`テスト投稿の保存に失敗しました: ${dbError.message}`, true); }
+                } catch(dbError) { console.error('IndexedDBへの保存エラー:', dbError); setStatus(`テスト投稿のシェアに失敗しました: ${dbError.message}`, true); }
             }; reader.onerror = () => { throw new Error("ファイルの読み込みに失敗しました。"); };
         } catch (error) { console.error('Test post save error:', error); setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true);
         } finally { button.disabled = false; }
@@ -488,7 +488,7 @@
     
     async function saveAudioToR2(blob, modelId, text, button) {
         if (!blob || !modelId || !text) {
-            setStatus('保存対象の音声データが不完全です。', true);
+            setStatus('シェア対象の音声データが不完全です。', true);
             return;
         }
         
@@ -504,7 +504,7 @@
             return;
         }
 
-        setStatus('R2に音声を保存中...');
+        setStatus('音声をシェア中...');
         button.disabled = true;
 
         try {
@@ -525,7 +525,7 @@
                             await saveAudioAsTestPost(blob, modelId, text, button);
                             return;
                         }
-                        throw new Error(`R2への保存に失敗: ${errorData.error}`);
+                        throw new Error(`シェアに失敗: ${errorData.error}`);
                     }
 
                     const result = await response.json();
@@ -533,7 +533,7 @@
 
                     if (!uploadedKey) {
                         console.warn("Upload API did not return a key. Performing a simple refresh.");
-                        setStatus('音声をR2に保存しました。一覧を更新します。');
+                        setStatus('音声をシェアしました。一覧を更新します。');
                         button.disabled = false;
                         const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
                         if (r2TabButton && !r2TabButton.classList.contains('locked-feature')) {
@@ -567,7 +567,7 @@
                             const foundPost = files.some(file => file.r2_key === uploadedKey);
 
                             if (foundPost) {
-                                setStatus('音声をR2に保存しました。一覧を更新します。');
+                                setStatus('音声をシェアしました。一覧を更新します。');
                                 button.disabled = false;
                                 const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]');
                                 if (r2TabButton && !r2TabButton.classList.contains('locked-feature')) {
