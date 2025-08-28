@@ -108,7 +108,7 @@ async function handleGetStatusUsers(env, type) {
 // ----------------------
 
 
-// --- 既存のAPI実装 (変更なし) ---
+// --- API実装 (ここから修正) ---
 
 async function handleGetPostsSince(env, params) {
     const limit = parseInt(params.get('limit'), 10) || 1000;
@@ -126,10 +126,11 @@ async function handleGetPostsSince(env, params) {
         const query = `
             SELECT 
                 a.id, a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, a.is_deleted, a.deleted_at,
-                p.username,
+                a.username AS posted_username, -- ★変更点: audiosテーブルのusername
+                p.username AS current_username, -- ★変更点: user_profilesテーブルのusername
                 us.is_blocked, us.is_muted
             FROM audios AS a
-            LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
+            LEFT JOIN user_profiles AS p ON a.user_id = p.user_id -- ★変更点: JOINを復活
             LEFT JOIN user_status AS us ON a.user_id = us.user_id
             ${whereClause} 
             ORDER BY a.created_at ASC, a.id ASC
@@ -165,10 +166,11 @@ async function handleGetAllPosts(env, params) {
         const query = `
             SELECT 
                 a.id, a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, a.is_deleted, a.deleted_at,
-                p.username,
+                a.username AS posted_username, -- ★変更点: audiosテーブルのusername
+                p.username AS current_username, -- ★変更点: user_profilesテーブルのusername
                 us.is_blocked, us.is_muted
             FROM audios AS a
-            LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
+            LEFT JOIN user_profiles AS p ON a.user_id = p.user_id -- ★変更点: JOINを復活
             LEFT JOIN user_status AS us ON a.user_id = us.user_id
             ${whereClause} 
             ORDER BY a.created_at DESC, a.id DESC
@@ -188,6 +190,8 @@ async function handleGetAllPosts(env, params) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' }});
     }
 }
+
+// --- (ここまで修正、以下は変更なし) ---
 
 async function handleDeletePost(env, postId) {
     try {
