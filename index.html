@@ -233,7 +233,7 @@
             <div class="tab-navigation">
                 <button class="tab-button active" data-tab="tts">音声合成</button>
                 <button class="tab-button" data-tab="results">合成結果</button>
-                <button class="tab-button" data-tab="r2-gallery">シェアされた音声</button>
+                <button class="tab-button" data-tab="r2-gallery">シェア</button>
                 <button class="tab-button" data-tab="background">背景設定</button>
                 <button class="tab-button" data-tab="ui">UI/データ管理</button>
             </div>
@@ -333,6 +333,8 @@
 
     const R2_ITEMS_PER_PAGE = 50;
     let r2GalleryState = { currentPage: 1, filter: 'all', modelId: '', searchText: '', userId: '', isLoading: false, hasNextPage: false };
+    // ★ NEW: For preventing consecutive duplicate submissions
+    let lastSavedAudioInfo = { modelId: null, text: null };
     let auth;
 
     // --- IndexedDB ---
@@ -395,7 +397,6 @@
             card.dataset.fileKey = file.r2_key;
             card.dataset.userId = file.user_id;
             const isTestPost = file.is_test_post;
-            // ★ MODIFIED: Add is-test-post data attribute for click handling
             card.dataset.isTestPost = isTestPost;
             const modelDisplayName = (typeof getModelData === 'function' && getModelData(file.model_name).displayName) || file.model_name;
             const formatConfig = (typeof getFormatConfigByContentType === 'function' && getFormatConfigByContentType(isTestPost ? file.content_type : `audio/${file.r2_key.split('.').pop()}`)) || { extension: 'bin' };
@@ -411,7 +412,6 @@
             let audioSrc, downloadHref;
             if (isTestPost) { try { const blob = base64toBlob(file.audio_base_64, file.content_type); const url = URL.createObjectURL(blob); audioSrc = url; downloadHref = url; } catch (e) { console.error("Error creating blob URL for test post:", e); audioSrc = ''; downloadHref = '#'; } } else { audioSrc = `/api/get/${encodeURIComponent(file.r2_key)}`; downloadHref = audioSrc; }
             
-            // ★ MODIFIED: Render an enabled share button for all posts.
             const shareButtonHtml = `<button class="icon-btn btn-share" title="音声URLをコピー">🔗</button>`;
 
             card.innerHTML = `
@@ -462,13 +462,25 @@
     async function fetchAndBuildPage(pageNumber) { const metadata = await getLatestMetadata(); if (!metadata) { return []; } const { totalAudios, latestChunkNumber } = metadata; const startItemIndex = (pageNumber - 1) * R2_ITEMS_PER_PAGE; if (pageNumber > 1 && startItemIndex >= totalAudios) { return []; } const endItemIndex = startItemIndex + R2_ITEMS_PER_PAGE; const requiredChunks = new Set(); const startChunkIndex = Math.floor(startItemIndex / R2_ITEMS_PER_PAGE); const safeEndItemIndex = Math.min(endItemIndex, totalAudios); const endChunkIndex = Math.floor((safeEndItemIndex > 0 ? safeEndItemIndex - 1 : 0) / R2_ITEMS_PER_PAGE); for (let i = startChunkIndex; i <= endChunkIndex; i++) { const chunkNumber = latestChunkNumber - i; if (chunkNumber > 0) { requiredChunks.add(chunkNumber); } } const fetchPromises = []; requiredChunks.forEach(chunkNum => { if (chunkCache.has(chunkNum)) { fetchPromises.push(Promise.resolve(chunkCache.get(chunkNum))); } else if (chunkNum === latestChunkNumber) { fetchPromises.push(fetch(`${API_BASE}/latest`).then(res => res.json()).then(data => { chunkCache.set(chunkNum, data.audios); return data.audios; })); } else { fetchPromises.push(fetch(`${API_BASE}/${chunkNum}`).then(res => res.json()).then(data => { chunkCache.set(chunkNum, data); return data; })); } }); const chunkResults = await Promise.all(fetchPromises); return chunkResults.flat(); }
     async function loadR2Gallery() { const r2GalleryContainer = document.getElementById('r2-gallery-container'); if (r2GalleryState.isLoading) return; r2GalleryState.isLoading = true; r2GalleryContainer.innerHTML = '<p>読み込み中...</p>'; updateR2PaginationUI(); updateR2FilterStatusUI(); try { if(r2GalleryState.filter !== 'all' || r2GalleryState.modelId || r2GalleryState.searchText || r2GalleryState.userId) { const params = new URLSearchParams({ page: r2GalleryState.currentPage, limit: R2_ITEMS_PER_PAGE }); if (r2GalleryState.filter === 'mine') params.set('filter', 'mine'); if (r2GalleryState.modelId) params.set('modelId', r2GalleryState.modelId); if (r2GalleryState.searchText) params.set('searchText', r2GalleryState.searchText); if (r2GalleryState.userId) params.set('userId', r2GalleryState.userId); const response = await fetch(`/api/list?${params.toString()}`); if (!response.ok) throw new Error('Failed to fetch filtered list'); const files = await response.json(); r2GalleryState.hasNextPage = files.length === R2_ITEMS_PER_PAGE; renderR2Gallery(files); } else { const chunkData = await fetchAndBuildPage(r2GalleryState.currentPage); let filesToDisplay; if (r2GalleryState.currentPage === 1) { const allTestPosts = await getAllTestPosts(); const combined = [...chunkData, ...allTestPosts]; const unique = Array.from(new Map(combined.map(item => [item.r2_key, item])).values()); unique.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); filesToDisplay = unique.slice(0, R2_ITEMS_PER_PAGE); } else { const pageStart = (r2GalleryState.currentPage - 1) * R2_ITEMS_PER_PAGE; const pageEnd = pageStart + R2_ITEMS_PER_PAGE; filesToDisplay = chunkData.slice(pageStart % R2_ITEMS_PER_PAGE, (pageEnd % R2_ITEMS_PER_PAGE) || R2_ITEMS_PER_PAGE); } renderR2Gallery(filesToDisplay); const metadata = await getLatestMetadata(); if (metadata) { const totalPages = Math.ceil(metadata.totalAudios / R2_ITEMS_PER_PAGE); r2GalleryState.hasNextPage = r2GalleryState.currentPage < totalPages; } else { r2GalleryState.hasNextPage = false; } } } catch (error) { console.error('R2 gallery load error:', error); r2GalleryContainer.innerHTML = `<p class="status-error" style="padding:10px; border-radius:4px;">エラー: ${error.message}</p>`; r2GalleryState.hasNextPage = false; } finally { r2GalleryState.isLoading = false; updateR2PaginationUI(); } }
     
-    async function saveAudioAsTestPost(blob, modelId, text, button) { if (!blob || !modelId || !text) { setStatus('テスト投稿の対象データが不完全です。', true); return; }
+    async function saveAudioAsTestPost(blob, modelId, text, button) { 
+        if (!blob || !modelId || !text) { setStatus('テスト投稿の対象データが不完全です。', true); return; }
+        
+        // ★ MODIFIED: Added duplicate submission check
+        const normalizedText = text.trim().replace(/\s+/g, ' ');
+        if (lastSavedAudioInfo.modelId === modelId && lastSavedAudioInfo.text === normalizedText) {
+            showToast('全く同じ音声は連続してシェアできません。', 'error');
+            return;
+        }
+
         const nameInput = prompt("投稿者名を入力してください（10文字以内、空欄で匿名）：", "");
         if (nameInput === null) return;
         let username = nameInput.trim();
         if (username.length > 10) { alert("名前は10文字以内で入力してください。"); return; }
         if (username === "") username = "匿名";
         if (!confirm(`名前: ${username}\n\nこの内容でテスト投稿としてシェアしますか？`)) return;
+
+        // ★ NEW: Update last saved info after user confirmation to prevent re-submission.
+        lastSavedAudioInfo = { modelId: modelId, text: normalizedText };
 
         setStatus('テスト投稿を準備中...'); button.disabled = true; let userId;
         try {
@@ -480,15 +492,30 @@
                     const newPost = { r2_key: `test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`, model_name: modelId, text_content: text, user_id: userId, username: username, audio_base_64: base64Audio, content_type: blob.type, is_test_post: true, created_at: new Date().toISOString() };
                     await addTestPost(newPost); await enforceLimit(); setStatus('音声をテスト投稿としてシェアしました。');
                     const r2TabButton = document.querySelector('.tab-button[data-tab="r2-gallery"]'); if (r2TabButton) r2TabButton.click();
-                } catch(dbError) { console.error('IndexedDBへの保存エラー:', dbError); setStatus(`テスト投稿のシェアに失敗しました: ${dbError.message}`, true); }
+                } catch(dbError) { 
+                    // ★ NEW: On failure, reset info to allow user to retry.
+                    lastSavedAudioInfo = { modelId: null, text: null };
+                    console.error('IndexedDBへの保存エラー:', dbError); 
+                    setStatus(`テスト投稿のシェアに失敗しました: ${dbError.message}`, true); 
+                }
             }; reader.onerror = () => { throw new Error("ファイルの読み込みに失敗しました。"); };
-        } catch (error) { console.error('Test post save error:', error); setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true);
+        } catch (error) { 
+            // ★ NEW: On failure, reset info to allow user to retry.
+            lastSavedAudioInfo = { modelId: null, text: null };
+            console.error('Test post save error:', error); setStatus(`テスト投稿の作成に失敗しました: ${error.message}`, true);
         } finally { button.disabled = false; }
     }
     
     async function saveAudioToR2(blob, modelId, text, button) {
         if (!blob || !modelId || !text) {
             setStatus('シェア対象の音声データが不完全です。', true);
+            return;
+        }
+
+        // ★ MODIFIED: Added duplicate submission check
+        const normalizedText = text.trim().replace(/\s+/g, ' ');
+        if (lastSavedAudioInfo.modelId === modelId && lastSavedAudioInfo.text === normalizedText) {
+            showToast('全く同じ音声は連続してシェアできません。', 'error');
             return;
         }
         
@@ -503,6 +530,9 @@
         if (!confirm(`名前: ${username}\nテキスト: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}\n\nこの内容で投稿しますか？`)) {
             return;
         }
+
+        // ★ NEW: Update last saved info after user confirmation to prevent re-submission.
+        lastSavedAudioInfo = { modelId: modelId, text: normalizedText };
 
         setStatus('音声をシェア中...');
         button.disabled = true;
@@ -522,6 +552,8 @@
                     if (!response.ok) {
                         const errorData = await response.json().catch(() => ({ error: response.statusText, reason: null }));
                         if (response.status === 403 && errorData.reason === 'muted') {
+                            // ★ MODIFIED: Temporarily reset info to allow the test post fallback to work.
+                            lastSavedAudioInfo = { modelId: null, text: null };
                             await saveAudioAsTestPost(blob, modelId, text, button);
                             return;
                         }
@@ -591,6 +623,8 @@
                     };
                     pollForPost();
                 } catch (err) {
+                    // ★ NEW: On any failure in this block, reset info to allow user to retry.
+                    lastSavedAudioInfo = { modelId: null, text: null };
                     console.error('R2 save error:', err);
                     setStatus(err.message, true);
                     button.disabled = false;
@@ -598,6 +632,8 @@
             };
             reader.onerror = (error) => { throw error; };
         } catch (error) {
+            // ★ NEW: On any failure in this block, reset info to allow user to retry.
+            lastSavedAudioInfo = { modelId: null, text: null };
             console.error('File reading error:', error);
             setStatus('ファイルの読み込みに失敗しました。', true);
             button.disabled = false;
@@ -636,7 +672,6 @@
                 return;
             }
 
-            // ★ MODIFIED: Share button click handler with toast notifications
             const shareButton = e.target.closest('.btn-share');
             if (shareButton) {
                 const isTestPost = card.dataset.isTestPost === 'true';
