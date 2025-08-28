@@ -1,4 +1,4 @@
-// functions/synthesize.js
+// functions/synthesize.js (speaker_uuid不要、パラメータ名修正版)
 
 const AUDIO_CONFIGS = {
     mp3: { format: 'mp3', contentType: 'audio/mpeg' },
@@ -6,7 +6,6 @@ const AUDIO_CONFIGS = {
     flac: { format: 'flac', contentType: 'audio/flac' },
     opus: { format: 'opus', contentType: 'audio/opus' },
 };
-const SUPPORTED_FORMATS = Object.keys(AUDIO_CONFIGS);
 
 function arrayBufferToBase64(buffer) {
     let binary = '';
@@ -18,11 +17,10 @@ function arrayBufferToBase64(buffer) {
     return btoa(binary);
 }
 
+// ★★★ ここからが修正箇所 (synthesizeSingleText 関数) ★★★
 async function synthesizeSingleText(text, modelUuid, apiKey, options, audioConfig) {
-    // ★ 変更点: optionsからspeedとvolumeを受け取る
     const { style_id, style_strength, speed, volume } = options;
     
-    // Aivis APIのエンドポイント
     const aivisApiUrl = 'https://api.aivis-project.com/v1/tts/synthesize';
 
     // APIに送信するペイロード
@@ -30,21 +28,24 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options, audioConfi
         text: text,
         model_uuid: modelUuid,
         style_id: Number(style_id),
-        output_format: audioConfig.format,
-        // 注: style_strength はAIVIS APIの仕様にないため、コメントアウトのままにしておきます
-        // speaking_rate: style_strength
+        output_format: audioConfig.format
     };
 
-    // ★ 変更点: speed と volume が指定されていればペイロードに追加
-    if (speed !== undefined && speed !== null) {
-        requestPayload.speed = Number(speed);
+    // フロントエンドからの値を、APIが要求する正しいパラメータ名にマッピング
+    if (speed !== undefined) {
+        // 'speed' を 'speaking_rate' に変更
+        requestPayload.speaking_rate = Number(speed);
     }
-    if (volume !== undefined && volume !== null) {
+    if (volume !== undefined) {
+        // 'volume' はそのまま
         requestPayload.volume = Number(volume);
+    }
+    if (style_strength !== undefined) {
+        // 'style_strength' を 'emotional_intensity' にマッピング
+        requestPayload.emotional_intensity = Number(style_strength);
     }
     
     try {
-        // Aivis APIへのリクエスト
         const aivisResponse = await fetch(aivisApiUrl, {
             method: 'POST',
             headers: {
@@ -82,12 +83,12 @@ async function synthesizeSingleText(text, modelUuid, apiKey, options, audioConfi
         };
     }
 }
+// ★★★ ここまでが修正箇所 ★★★
 
 async function handleRequest(context) {
     const { env } = context;
     const body = await context.request.json();
     
-    // ★ 変更点: リクエストボディから speed と volume を受け取る
     const { model_id, texts, style_id, style_strength, format = 'mp3', speed, volume } = body;
 
     if (!texts || !Array.isArray(texts) || texts.length === 0) {
@@ -99,7 +100,7 @@ async function handleRequest(context) {
     
     const audioConfig = AUDIO_CONFIGS[format];
     if (!audioConfig) {
-        return new Response(`Unsupported format: ${format}. Supported formats are: ${SUPPORTED_FORMATS.join(', ')}`, { status: 400 });
+        return new Response(`Unsupported format: ${format}.`, { status: 400 });
     }
     
     const targetModelUuid = env[`MODEL_UUID_${model_id}`];
@@ -112,9 +113,9 @@ async function handleRequest(context) {
         return new Response(`サーバーエラー: モデルID ${model_id} のUUIDが見つかりません。`, { status: 400 });
     }
     
-    // ★ 変更点: optionsオブジェクトに speed と volume を含める
     const options = { style_id, style_strength, speed, volume };
     
+    // synthesizeSingleTextの呼び出しも speakerUuid なしに変更
     const results = await Promise.all(
         texts.map(text => synthesizeSingleText(text, targetModelUuid, apiKey, options, audioConfig))
     );
