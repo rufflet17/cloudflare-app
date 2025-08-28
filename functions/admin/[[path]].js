@@ -108,7 +108,7 @@ async function handleGetStatusUsers(env, type) {
 // ----------------------
 
 
-// --- 既存のAPI実装 (変更なし) ---
+// --- 既存のAPI実装 (変更あり) ---
 
 async function handleGetPostsSince(env, params) {
     const limit = parseInt(params.get('limit'), 10) || 1000;
@@ -126,7 +126,8 @@ async function handleGetPostsSince(env, params) {
         const query = `
             SELECT 
                 a.id, a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, a.is_deleted, a.deleted_at,
-                p.username,
+                a.username, -- ★ MODIFIED: audiosテーブルから投稿者名を取得
+                p.username as user_profile_username, -- ★ MODIFIED: user_profilesテーブルのusernameを別名で取得
                 us.is_blocked, us.is_muted
             FROM audios AS a
             LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
@@ -165,7 +166,8 @@ async function handleGetAllPosts(env, params) {
         const query = `
             SELECT 
                 a.id, a.r2_key, a.user_id, a.model_name, a.text_content, a.created_at, a.is_deleted, a.deleted_at,
-                p.username,
+                a.username, -- ★ MODIFIED: audiosテーブルから投稿者名を取得
+                p.username as user_profile_username, -- ★ MODIFIED: user_profilesテーブルのusernameを別名で取得
                 us.is_blocked, us.is_muted
             FROM audios AS a
             LEFT JOIN user_profiles AS p ON a.user_id = p.user_id
