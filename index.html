@@ -212,7 +212,7 @@
             width: 100%;
             margin: 0;
             background-color: var(--secondary-color);
-            height: 45px; /* selectボックスの高さに合わせる */
+            height: 55px; /* selectボックスの高さに合わせる */
             padding: 8px 12px;
         }
 
@@ -477,8 +477,177 @@
 
     // --- R2 Storage and Gallery Functions ---
     function base64toBlob(base64, contentType = '', sliceSize = 512) { const byteCharacters = atob(base64); const byteArrays = []; for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) { const slice = byteCharacters.slice(offset, offset + sliceSize); const byteNumbers = new Array(slice.length); for (let i = 0; i < slice.length; i++) { byteNumbers[i] = slice.charCodeAt(i); } byteArrays.push(new Uint8Array(byteNumbers)); } return new Blob(byteArrays, {type: contentType}); }
-    function renderR2Gallery(files) { const r2GalleryContainer = document.getElementById('r2-gallery-container'); r2GalleryContainer.querySelectorAll('audio').forEach(audio => { if (audio.src.startsWith('blob:')) URL.revokeObjectURL(audio.src); }); if (!files || files.length === 0) { r2GalleryContainer.innerHTML = r2GalleryState.currentPage === 1 ? '<p>条件に一致する音声はありません。</p>' : '<p>これ以上音声はありません。</p>'; return; } r2GalleryContainer.innerHTML = ''; const currentUid = window.currentUser ? window.currentUser.uid : null; files.forEach(file => { const card = document.createElement('div'); card.className = 'player-card'; card.dataset.fileKey = file.r2_key; card.dataset.userId = file.user_id; const isTestPost = file.is_test_post; card.dataset.isTestPost = isTestPost; const modelDisplayName = (typeof getModelData === 'function' && getModelData(file.model_name).displayName) || file.model_name; const formatConfig = (typeof getFormatConfigByContentType === 'function' && getFormatConfigByContentType(isTestPost ? file.content_type : `audio/${file.r2_key.split('.').pop()}`)) || { extension: 'bin' }; const downloadFilename = (typeof createSafeFileName === 'function' && createSafeFileName(file.model_name, file.text_content, formatConfig.extension)) || 'audio.bin'; const ownerUsername = file.username || '匿名'; const isOwnFile = currentUid && file.user_id === currentUid; const ownerIndicator = isOwnFile ? ` <span class="is-own">(自分)</span>` : ''; const ownerInfoHtml = `<span>${ownerUsername}${ownerIndicator}</span>`; const actionButton = ''; let audioSrc, downloadHref; if (isTestPost) { try { const blob = base64toBlob(file.audio_base_64, file.content_type); const url = URL.createObjectURL(blob); audioSrc = url; downloadHref = url; } catch (e) { console.error("Error creating blob URL for test post:", e); audioSrc = ''; downloadHref = '#'; } } else { audioSrc = `/api/get/${encodeURIComponent(file.r2_key)}`; downloadHref = audioSrc; } const shareButtonHtml = `<button class="icon-btn btn-share" title="音声URLをコピー">🔗</button>`; card.innerHTML = ` <div class="card-main"> <div style="margin-bottom: 8px;"> <div class="card-owner-info"> <span>${modelDisplayName}</span> ${ownerInfoHtml} </div> <p style="margin: 0; color: #333; word-break: break-all;">${file.text_content}</p> </div> <div class="custom-audio-player"> <button class="play-pause-btn"> <svg viewBox="0 0 24 24" class="play-icon"><path d="M8 5v14l11-7z"></path></svg> </button> <div class="progress-wrapper"><div class="progress-bar"></div></div> <span class="time-display">0:00 / --:--</span> <audio preload="none" src="${audioSrc}" style="display: none;"></audio> </div> </div> <div class="player-actions"> <a href="${downloadHref}" download="${downloadFilename}" class="icon-btn download-link" title="ダウンロード">📥</a> ${shareButtonHtml} ${actionButton} </div>`; r2GalleryContainer.appendChild(card); const audio = card.querySelector('audio'); const playBtn = card.querySelector('.play-pause-btn'); const progressBar = card.querySelector('.progress-bar'); const timeDisplay = card.querySelector('.time-display'); const playIconSVG = '<svg viewBox="0 0 24 24" class="play-icon"><path d="M8 5v14l11-7z"></path></svg>'; const pauseIconSVG = '<svg viewBox="0 0 24 24" class="pause-icon"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path></svg>'; audio.addEventListener('loadedmetadata', () => { timeDisplay.textContent = `${formatTime(0)} / ${formatTime(audio.duration)}`; }); audio.addEventListener('timeupdate', () => { const progressPercent = (audio.currentTime / audio.duration) * 100; progressBar.style.width = `${progressPercent}%`; timeDisplay.textContent = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`; }); audio.addEventListener('play', () => { playBtn.innerHTML = pauseIconSVG; playBtn.classList.add('playing'); }); audio.addEventListener('pause', () => { playBtn.innerHTML = playIconSVG; playBtn.classList.remove('playing'); }); audio.addEventListener('ended', () => { playBtn.innerHTML = playIconSVG; playBtn.classList.remove('playing'); progressBar.style.width = '0%'; audio.currentTime = 0; }); }); }
-    function updateR2FilterStatusUI(username = null) { const r2FilterStatus = document.getElementById('r2-filter-status'); if (r2GalleryState.userId) { const displayName = username ? `「${username}」さん` : '特定ユーザー'; r2FilterStatus.innerHTML = `${displayName}の投稿を表示中 <button id="clear-user-filter-btn">フィルター解除</button>`; r2FilterStatus.style.display = 'block'; document.getElementById('clear-user-filter-btn').onclick = () => { r2GalleryState.userId = ''; loadR2Gallery(); }; } else { r2FilterStatus.style.display = 'none'; } }
+    
+    // =========================================================================
+    // ★★★ START: XSS脆弱性を修正した関数 ★★★
+    // =========================================================================
+
+    function renderR2Gallery(files) {
+        const r2GalleryContainer = document.getElementById('r2-gallery-container');
+        // 古いBlob URLを解放
+        r2GalleryContainer.querySelectorAll('audio').forEach(audio => {
+            if (audio.src.startsWith('blob:')) URL.revokeObjectURL(audio.src);
+        });
+        r2GalleryContainer.innerHTML = ''; // コンテナをクリア
+
+        if (!files || files.length === 0) {
+            const p = document.createElement('p');
+            p.textContent = r2GalleryState.currentPage === 1 ? '条件に一致する音声はありません。' : 'これ以上音声はありません。';
+            r2GalleryContainer.appendChild(p);
+            return;
+        }
+
+        const currentUid = window.currentUser ? window.currentUser.uid : null;
+        
+        files.forEach(file => {
+            const card = document.createElement('div');
+            card.className = 'player-card';
+            card.dataset.fileKey = file.r2_key;
+            card.dataset.userId = file.user_id;
+            const isTestPost = file.is_test_post;
+            card.dataset.isTestPost = isTestPost;
+
+            const modelDisplayName = (typeof getModelData === 'function' && getModelData(file.model_name).displayName) || file.model_name;
+            const formatConfig = (typeof getFormatConfigByContentType === 'function' && getFormatConfigByContentType(isTestPost ? file.content_type : `audio/${file.r2_key.split('.').pop()}`)) || { extension: 'bin' };
+            const downloadFilename = (typeof createSafeFileName === 'function' && createSafeFileName(file.model_name, file.text_content, formatConfig.extension)) || 'audio.bin';
+            const ownerUsername = file.username || '匿名';
+            const isOwnFile = currentUid && file.user_id === currentUid;
+
+            let audioSrc, downloadHref;
+            if (isTestPost) {
+                try {
+                    const blob = base64toBlob(file.audio_base_64, file.content_type);
+                    const url = URL.createObjectURL(blob);
+                    audioSrc = url;
+                    downloadHref = url;
+                } catch (e) {
+                    console.error("Error creating blob URL for test post:", e);
+                    audioSrc = '';
+                    downloadHref = '#';
+                }
+            } else {
+                audioSrc = `/api/get/${encodeURIComponent(file.r2_key)}`;
+                downloadHref = audioSrc;
+            }
+
+            // --- DOM要素の構築 ---
+            const cardMain = document.createElement('div');
+            cardMain.className = 'card-main';
+
+            const infoWrapper = document.createElement('div');
+            infoWrapper.style.marginBottom = '8px';
+
+            const cardOwnerInfo = document.createElement('div');
+            cardOwnerInfo.className = 'card-owner-info';
+            
+            const modelSpan = document.createElement('span');
+            modelSpan.textContent = modelDisplayName; // 安全: textContent を使用
+
+            const ownerSpan = document.createElement('span');
+            ownerSpan.textContent = ownerUsername; // 安全: textContent を使用
+            if (isOwnFile) {
+                const ownIndicator = document.createElement('span');
+                ownIndicator.className = 'is-own';
+                ownIndicator.textContent = ' (自分)';
+                ownerSpan.appendChild(ownIndicator);
+            }
+            cardOwnerInfo.append(modelSpan, ownerSpan);
+
+            const textP = document.createElement('p');
+            textP.style.cssText = "margin: 0; color: #333; word-break: break-all;";
+            textP.textContent = file.text_content; // 安全: textContent を使用
+
+            infoWrapper.append(cardOwnerInfo, textP);
+
+            const playerDiv = document.createElement('div');
+            playerDiv.className = 'custom-audio-player';
+
+            const playPauseBtn = document.createElement('button');
+            playPauseBtn.className = 'play-pause-btn';
+            const playIconSVG = '<svg viewBox="0 0 24 24" class="play-icon"><path d="M8 5v14l11-7z"></path></svg>';
+            playPauseBtn.innerHTML = playIconSVG; // 静的なSVGなので安全
+
+            const progressWrapper = document.createElement('div');
+            progressWrapper.className = 'progress-wrapper';
+            const progressBar = document.createElement('div');
+            progressBar.className = 'progress-bar';
+            progressWrapper.appendChild(progressBar);
+
+            const timeDisplay = document.createElement('span');
+            timeDisplay.className = 'time-display';
+            timeDisplay.textContent = '0:00 / --:--';
+
+            const audio = document.createElement('audio');
+            audio.preload = 'none';
+            audio.src = audioSrc;
+            audio.style.display = 'none';
+
+            playerDiv.append(playPauseBtn, progressWrapper, timeDisplay, audio);
+            cardMain.append(infoWrapper, playerDiv);
+
+            const playerActions = document.createElement('div');
+            playerActions.className = 'player-actions';
+
+            const downloadLink = document.createElement('a');
+            downloadLink.href = downloadHref;
+            downloadLink.download = downloadFilename;
+            downloadLink.className = 'icon-btn download-link';
+            downloadLink.title = 'ダウンロード';
+            downloadLink.textContent = '📥';
+
+            const shareButton = document.createElement('button');
+            shareButton.className = 'icon-btn btn-share';
+            shareButton.title = '音声URLをコピー';
+            shareButton.textContent = '🔗';
+            
+            playerActions.append(downloadLink, shareButton);
+            card.append(cardMain, playerActions);
+            r2GalleryContainer.appendChild(card);
+
+            // --- イベントリスナーの設定 ---
+            const pauseIconSVG = '<svg viewBox="0 0 24 24" class="pause-icon"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path></svg>';
+            audio.addEventListener('loadedmetadata', () => { timeDisplay.textContent = `${formatTime(0)} / ${formatTime(audio.duration)}`; });
+            audio.addEventListener('timeupdate', () => { const progressPercent = (audio.currentTime / audio.duration) * 100; progressBar.style.width = `${progressPercent}%`; timeDisplay.textContent = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`; });
+            audio.addEventListener('play', () => { playPauseBtn.innerHTML = pauseIconSVG; playPauseBtn.classList.add('playing'); });
+            audio.addEventListener('pause', () => { playPauseBtn.innerHTML = playIconSVG; playPauseBtn.classList.remove('playing'); });
+            audio.addEventListener('ended', () => { playPauseBtn.innerHTML = playIconSVG; playPauseBtn.classList.remove('playing'); progressBar.style.width = '0%'; audio.currentTime = 0; });
+        });
+    }
+
+    function updateR2FilterStatusUI(username = null) {
+        const r2FilterStatus = document.getElementById('r2-filter-status');
+        // まず子要素をすべて削除（安全なクリア方法）
+        while (r2FilterStatus.firstChild) {
+            r2FilterStatus.removeChild(r2FilterStatus.firstChild);
+        }
+
+        if (r2GalleryState.userId) {
+            const displayName = username ? `「${username}」さん` : '特定ユーザー';
+            
+            // テキスト部分を安全なテキストノードとして作成
+            const textNode = document.createTextNode(`${displayName}の投稿を表示中 `);
+            
+            // ボタンを生成
+            const clearButton = document.createElement('button');
+            clearButton.id = 'clear-user-filter-btn';
+            clearButton.textContent = 'フィルター解除';
+            clearButton.onclick = () => {
+                r2GalleryState.userId = '';
+                loadR2Gallery();
+            };
+
+            r2FilterStatus.appendChild(textNode);
+            r2FilterStatus.appendChild(clearButton);
+            r2FilterStatus.style.display = 'block';
+        } else {
+            r2FilterStatus.style.display = 'none';
+        }
+    }
+
+    // =========================================================================
+    // ★★★ END: XSS脆弱性を修正した関数 ★★★
+    // =========================================================================
+
     function updateR2PaginationUI() { const r2PaginationControls = document.getElementById('r2-pagination-controls'); const r2PageInfo = document.getElementById('r2-page-info'); const r2PrevPageBtn = document.getElementById('r2-prev-page-btn'); const r2NextPageBtn = document.getElementById('r2-next-page-btn'); r2PaginationControls.style.display = 'flex'; r2PageInfo.textContent = `ページ ${r2GalleryState.currentPage}`; r2PrevPageBtn.disabled = r2GalleryState.currentPage <= 1 || r2GalleryState.isLoading; r2NextPageBtn.disabled = !r2GalleryState.hasNextPage || r2GalleryState.isLoading; }
     const API_BASE = '/api/chunk'; let latestMetadata = null; let chunkCache = new Map(); async function getLatestMetadata(forceRefresh = false) { if (latestMetadata && !forceRefresh) { return latestMetadata; } try { const response = await fetch(`${API_BASE}/latest`, { cache: 'no-store' }); if (!response.ok) throw new Error('Failed to fetch latest metadata'); const data = await response.json(); latestMetadata = data.metadata; chunkCache.set(latestMetadata.latestChunkNumber, data.audios); return latestMetadata; } catch (error) { console.error("Error fetching metadata:", error); latestMetadata = null; chunkCache.clear(); throw error; } }
     async function fetchAndBuildPage(pageNumber) { const metadata = await getLatestMetadata(); if (!metadata) { return []; } const { totalAudios, latestChunkNumber } = metadata; const startItemIndex = (pageNumber - 1) * R2_ITEMS_PER_PAGE; if (pageNumber > 1 && startItemIndex >= totalAudios) { return []; } const endItemIndex = startItemIndex + R2_ITEMS_PER_PAGE; const requiredChunks = new Set(); const startChunkIndex = Math.floor(startItemIndex / R2_ITEMS_PER_PAGE); const safeEndItemIndex = Math.min(endItemIndex, totalAudios); const endChunkIndex = Math.floor((safeEndItemIndex > 0 ? safeEndItemIndex - 1 : 0) / R2_ITEMS_PER_PAGE); for (let i = startChunkIndex; i <= endChunkIndex; i++) { const chunkNumber = latestChunkNumber - i; if (chunkNumber > 0) { requiredChunks.add(chunkNumber); } } const fetchPromises = []; requiredChunks.forEach(chunkNum => { if (chunkCache.has(chunkNum)) { fetchPromises.push(Promise.resolve(chunkCache.get(chunkNum))); } else if (chunkNum === latestChunkNumber) { fetchPromises.push(fetch(`${API_BASE}/latest`).then(res => res.json()).then(data => { chunkCache.set(chunkNum, data.audios); return data.audios; })); } else { fetchPromises.push(fetch(`${API_BASE}/${chunkNum}`).then(res => res.json()).then(data => { chunkCache.set(chunkNum, data); return data; })); } }); const chunkResults = await Promise.all(fetchPromises); return chunkResults.flat(); }
