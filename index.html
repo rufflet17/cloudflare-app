@@ -170,50 +170,47 @@
         .toast-message.show { opacity: 1; transform: translateY(0); }
         .toast-message.error { background-color: var(--danger-hover-color); }
 
-        /* ★★★ START: REVISED CSS FOR 2x2 GRID LAYOUT ★★★ */
+        /* ★★★ START: REVISED CSS FOR ALIGNING BUTTON WITH SELECT BOX ★★★ */
         #tts-controls-wrapper {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 1.5rem 1rem; /* 縦方向の隙間を少し広めに設定 */
+            gap: 1.5rem 1rem;
             margin-bottom: 1.5rem;
         }
         
-        /* ラッパーdivから中のコントロール要素のデフォルトマージンを削除 */
         #tts-controls-wrapper > div > * {
             margin-bottom: 0;
         }
         
-        /* ラベルとボタンを垂直方向下端に揃えるための設定 */
+        /* ボタンを囲むラッパーをFlexコンテナにし、中のボタンを下端に配置 */
         #toggle-wrapper {
             display: flex;
             flex-direction: column;
-            justify-content: flex-end; /* ボタンを下端に配置 */
+            justify-content: flex-end; /* これがボタンを下揃えにするキー */
         }
         
+        /* 「追加設定」ボタン専用のスタイル */
         #toggle-additional-settings-btn {
             background-color: var(--secondary-color);
+            padding-top: 8px;    /* selectボックスのpaddingと合わせる */
+            padding-bottom: 8px; /* selectボックスのpaddingと合わせる */
         }
         #toggle-additional-settings-btn:hover {
             background-color: var(--secondary-hover-color);
         }
 
-        /* 展開される追加設定パネルのスタイル */
         #additional-settings-panel {
-            grid-column: 1 / -1; /* 2つのカラムをまたいで全幅に */
-            display: none; /* 初期状態では非表示 */
-            
-            /* パネル内部もグリッドレイアウトに */
+            grid-column: 1 / -1;
             display: none;
             grid-template-columns: 1fr 1fr;
             gap: 1.5rem 1rem;
         }
-
-        /* expandedクラスが付与されたらパネルを表示 */
+        
         #tts-controls-wrapper.expanded #additional-settings-panel {
             display: grid;
-            margin-top: 0.5rem; /* 展開時に少しマージンを追加 */
+            margin-top: 0.5rem;
         }
-        /* ★★★ END: REVISED CSS FOR 2x2 GRID LAYOUT ★★★ */
+        /* ★★★ END: REVISED CSS FOR ALIGNING BUTTON WITH SELECT BOX ★★★ */
     </style>
 </head>
 <body>
@@ -243,7 +240,7 @@
         <div class="container-content">
             <div id="tab-tts" class="tab-content active">
                 
-                <!-- ★★★ START: REVISED HTML FOR 2x2 GRID LAYOUT ★★★ -->
+                <!-- ★★★ HTMLの構造は以前のままでOKです ★★★ -->
                 <div id="tts-controls-wrapper">
                     <!-- Row 1 -->
                     <div id="model-wrapper">
@@ -251,7 +248,6 @@
                         <select id="model-select-tts"></select>
                     </div>
                     <div id="toggle-wrapper">
-                        <!-- ラベルは配置しませんが、divで囲むことでグリッドの高さを維持します -->
                         <button id="toggle-additional-settings-btn">追加設定</button>
                     </div>
 
@@ -268,7 +264,7 @@
                         </div>
                     </div>
                     
-                    <!-- Expandable Panel (hidden by default) -->
+                    <!-- Expandable Panel -->
                     <div id="additional-settings-panel">
                         <div id="volume-wrapper">
                             <label for="volume-slider">音量:</label>
@@ -287,7 +283,6 @@
                         </div>
                     </div>
                 </div>
-                <!-- ★★★ END: REVISED HTML FOR 2x2 GRID LAYOUT ★★★ -->
                 
                 <label for="text">テキスト (1行50文字, 最大10行まで):</label>
                 <textarea id="text" rows="5">こんにちは</textarea>
