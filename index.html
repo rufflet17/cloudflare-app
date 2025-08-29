@@ -88,25 +88,10 @@
         .progress-bar { height: 100%; width: 0%; background-color: var(--primary-color); border-radius: 3px; }
         .time-display { font-size: 0.8em; color: #666; min-width: 75px; text-align: right; user-select: none; }
 
-        .slider-container {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .slider-container input[type="range"] {
-            flex-grow: 1;
-            width: auto;
-            margin-bottom: 0;
-        }
-        .slider-container input[type="number"] {
-            width: 80px;
-            flex-shrink: 0;
-            margin-bottom: 0;
-        }
-        .slider-container span {
-            min-width: 40px;
-            text-align: right;
-        }
+        .slider-container { display: flex; align-items: center; gap: 10px; }
+        .slider-container input[type="range"] { flex-grow: 1; width: auto; margin-bottom: 0; }
+        .slider-container input[type="number"] { width: 80px; flex-shrink: 0; margin-bottom: 0; }
+        .slider-container span { min-width: 40px; text-align: right; }
 
         .card-status { font-size: 0.9em; font-weight: bold; min-height: 1.2em; color: var(--primary-color); }
         .card-text-wrapper { display: flex; align-items: baseline; gap: 8px; }
@@ -185,51 +170,50 @@
         .toast-message.show { opacity: 1; transform: translateY(0); }
         .toast-message.error { background-color: var(--danger-hover-color); }
 
-        /* ★★★ START: REVISED CSS FOR TTS CONTROLS LAYOUT (HEIGHT ALIGNMENT) ★★★ */
+        /* ★★★ START: REVISED CSS FOR 2x2 GRID LAYOUT ★★★ */
         #tts-controls-wrapper {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-            margin-bottom: 1rem;
-            /* グリッドアイテムはデフォルトで縦方向に引き伸ばされます (align-items: stretch) */
+            gap: 1.5rem 1rem; /* 縦方向の隙間を少し広めに設定 */
+            margin-bottom: 1.5rem;
         }
-
-        /* 各コントロールのラッパーをFlexコンテナにして、中の要素を縦に並べます */
-        #model-wrapper, 
+        
+        /* ラッパーdivから中のコントロール要素のデフォルトマージンを削除 */
+        #tts-controls-wrapper > div > * {
+            margin-bottom: 0;
+        }
+        
+        /* ラベルとボタンを垂直方向下端に揃えるための設定 */
         #toggle-wrapper {
             display: flex;
             flex-direction: column;
-        }
-        
-        /* selectボックスとボタンが、それぞれのラッパー内で残りの高さいっぱいに広がるように設定します */
-        #model-select-tts,
-        #toggle-additional-settings-btn {
-            flex-grow: 1;
-        }
-
-        #additional-settings-panel {
-            grid-column: 1 / -1; /* 全幅を使用 */
-            display: none; /* 初期状態では非表示 */
-            gap: 1rem;
-            grid-template-columns: 1fr 1fr;
-        }
-
-        #tts-controls-wrapper.expanded #additional-settings-panel {
-            display: grid; /* expandedクラスが付いたら表示 */
+            justify-content: flex-end; /* ボタンを下端に配置 */
         }
         
         #toggle-additional-settings-btn {
-            width: 100%;
-            margin: 0;
             background-color: var(--secondary-color);
-            /* heightプロパティを削除。flex-growが自動で高さを調整します */
-            padding: 8px 12px;
+        }
+        #toggle-additional-settings-btn:hover {
+            background-color: var(--secondary-hover-color);
         }
 
-        #toggle-additional-settings-btn:hover {
-             background-color: var(--secondary-hover-color);
+        /* 展開される追加設定パネルのスタイル */
+        #additional-settings-panel {
+            grid-column: 1 / -1; /* 2つのカラムをまたいで全幅に */
+            display: none; /* 初期状態では非表示 */
+            
+            /* パネル内部もグリッドレイアウトに */
+            display: none;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem 1rem;
         }
-        /* ★★★ END: REVISED CSS FOR TTS CONTROLS LAYOUT ★★★ */
+
+        /* expandedクラスが付与されたらパネルを表示 */
+        #tts-controls-wrapper.expanded #additional-settings-panel {
+            display: grid;
+            margin-top: 0.5rem; /* 展開時に少しマージンを追加 */
+        }
+        /* ★★★ END: REVISED CSS FOR 2x2 GRID LAYOUT ★★★ */
     </style>
 </head>
 <body>
@@ -259,23 +243,23 @@
         <div class="container-content">
             <div id="tab-tts" class="tab-content active">
                 
-                <!-- ★★★ START: MODIFIED HTML STRUCTURE FOR TTS CONTROLS (構造は変更ありませんが、上記のCSSで動作します) ★★★ -->
+                <!-- ★★★ START: REVISED HTML FOR 2x2 GRID LAYOUT ★★★ -->
                 <div id="tts-controls-wrapper">
+                    <!-- Row 1 -->
                     <div id="model-wrapper">
                         <label for="model-select-tts">音声モデル:</label>
                         <select id="model-select-tts"></select>
                     </div>
-
                     <div id="toggle-wrapper">
-                        <label>&nbsp;</label> <!-- for alignment -->
+                        <!-- ラベルは配置しませんが、divで囲むことでグリッドの高さを維持します -->
                         <button id="toggle-additional-settings-btn">追加設定</button>
                     </div>
 
+                    <!-- Row 2 -->
                     <div id="style-id-wrapper">
                         <label for="style-id-input">スタイルID (例: 0, 1, ...):</label>
                         <input type="number" id="style-id-input" value="0" min="0">
                     </div>
-
                     <div id="style-strength-wrapper">
                         <label for="style_strength">スタイル強度:</label>
                         <div class="slider-container">
@@ -283,7 +267,8 @@
                             <span id="strength-value">1.00</span>
                         </div>
                     </div>
-
+                    
+                    <!-- Expandable Panel (hidden by default) -->
                     <div id="additional-settings-panel">
                         <div id="volume-wrapper">
                             <label for="volume-slider">音量:</label>
@@ -302,7 +287,7 @@
                         </div>
                     </div>
                 </div>
-                <!-- ★★★ END: MODIFIED HTML STRUCTURE FOR TTS CONTROLS ★★★ -->
+                <!-- ★★★ END: REVISED HTML FOR 2x2 GRID LAYOUT ★★★ -->
                 
                 <label for="text">テキスト (1行50文字, 最大10行まで):</label>
                 <textarea id="text" rows="5">こんにちは</textarea>
