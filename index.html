@@ -185,25 +185,21 @@
         .toast-message.show { opacity: 1; transform: translateY(0); }
         .toast-message.error { background-color: var(--danger-hover-color); }
 
-        /* ★★★ START: REVISED CSS FOR TTS CONTROLS LAYOUT (HEIGHT ALIGNMENT) ★★★ */
+        /* ★★★ START: REVISED CSS FOR TTS CONTROLS LAYOUT (BUTTON HEIGHT ADJUSTED) ★★★ */
         #tts-controls-wrapper {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 1rem;
             margin-bottom: 1rem;
-            /* グリッドアイテムはデフォルトで縦方向に引き伸ばされます (align-items: stretch) */
         }
 
-        /* 各コントロールのラッパーをFlexコンテナにして、中の要素を縦に並べます */
-        #model-wrapper, 
+        #model-wrapper,
         #toggle-wrapper {
             display: flex;
             flex-direction: column;
         }
-        
-        /* selectボックスとボタンが、それぞれのラッパー内で残りの高さいっぱいに広がるように設定します */
-        #model-select-tts,
-        #toggle-additional-settings-btn {
+
+        #model-select-tts {
             flex-grow: 1;
         }
 
@@ -217,17 +213,21 @@
         #tts-controls-wrapper.expanded #additional-settings-panel {
             display: grid; /* expandedクラスが付いたら表示 */
         }
-        
+
         #toggle-additional-settings-btn {
+            /* flex-grow: 1; を削除 */
+            height: 35px; /* お好みの高さに調整してください */
+            margin-top: auto; /* ボタンを下端に配置します */
             width: 100%;
-            margin: 0;
+            margin-left: 0;
+            margin-right: 0;
+            margin-bottom: 0;
             background-color: var(--secondary-color);
-            /* heightプロパティを削除。flex-growが自動で高さを調整します */
             padding: 8px 12px;
         }
 
         #toggle-additional-settings-btn:hover {
-             background-color: var(--secondary-hover-color);
+            background-color: var(--secondary-hover-color);
         }
         /* ★★★ END: REVISED CSS FOR TTS CONTROLS LAYOUT ★★★ */
     </style>
